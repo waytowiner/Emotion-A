@@ -6,6 +6,9 @@
 - 增量更新：python scripts/fetch_stock_history.py --update [end_date]
   对每个已有 chunk 追加其最后交易日之后的新数据；新上市股票写入新 chunk。
   每日更新用此模式，无需删除重抓（约 20-40 分钟，瓶颈是 baostock 逐股查询）。
+
+默认排除科创板（688 开头，50 万门槛）和北交所（baostock 不含）。
+如需抓科创板：python scripts/fetch_stock_history.py --include-star
 """
 
 from __future__ import annotations
@@ -23,6 +26,10 @@ CHUNK_DIR = ROOT / "data" / "cache" / "stock_chunks"
 CHUNK_SIZE = 250
 
 FIELDS = "date,code,close,high,preclose,pctChg,amount,turn,tradestatus,isST"
+
+# 科创板（688）默认仍抓取——板块因子计算需要科创板成分股，排除会导致IC反转。
+# 如确认不抓：python scripts/fetch_stock_history.py --exclude-star
+INCLUDE_STAR = "--exclude-star" not in sys.argv
 
 
 def _bs_code(code6: str) -> str:
@@ -143,8 +150,8 @@ def run_update(bs, codes: list[str], name6: dict[str, str],
 
 def main() -> None:
     update_mode = "--update" in sys.argv
-    args = [a for a in sys.argv[1:] if a != "--update"]
-    start = args[0] if len(args) > 0 else "2023-01-01"
+    args = [a for a in sys.argv[1:] if a not in ("--update", "--exclude-star")]
+    start = args[0] if len(args) > 0 else "2024-09-01"
     end = args[1] if len(args) > 1 else time.strftime("%Y-%m-%d")
 
     import baostock as bs
@@ -163,6 +170,11 @@ def main() -> None:
         bs.logout()
 
     codes = [c for c, _ in stocks]
+    # 科创板（688）默认保留——因子计算需要。--exclude-star 时排除
+    if not INCLUDE_STAR:
+        before = len(codes)
+        codes = [c for c in codes if not c.split(".")[1].startswith("688")]
+        print(f"排除科创板: {before} -> {len(codes)}（减少 {before - len(codes)} 只）", flush=True)
     name6 = {c.split(".")[1]: n for c, n in stocks}
     print(f"total listed stocks: {len(codes)}, range {start} ~ {end}, "
           f"mode={'update' if update_mode else 'full'}", flush=True)

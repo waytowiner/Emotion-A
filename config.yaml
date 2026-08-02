@@ -7,9 +7,10 @@ board_source: eastmoney
 
 # 历史数据范围
 history:
-  start_date: "2024-06-01"   # 数据起点（9·24 regime 前的缓冲，供平滑/分位计算）
+  start_date: "2024-09-01"   # 9·24 regime 起点前缓冲（用户：9月后风格完全不同，不要老数据）
   regime_start: "2024-09-24" # 当前市场风格起点（政策转向）
   adjust: ""                 # 不复权（情绪因子用真实涨跌幅）
+  exclude_star: false        # 科创板688必须保留用于因子计算（排除后IC反转）；用户仅无交易权限
 
 # 时序分位窗口（天）：随 regime 缩短，不再用一年的老数据
 score_lookback: 120

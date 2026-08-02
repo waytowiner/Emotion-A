@@ -58,6 +58,13 @@ def load_stock_chunks(cache_dir: str | Path) -> pd.DataFrame:
     return df
 
 
+def _exclude_star(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    """排除科创板（688 开头，50 万门槛）。"""
+    if cfg.get("history", {}).get("exclude_star", False):
+        df = df[~df["code"].astype(str).str.startswith("688")]
+    return df
+
+
 def build_board_kline_from_stocks(stock_daily: pd.DataFrame,
                                   board_map: pd.DataFrame) -> pd.DataFrame:
     """降级：东财板块指数不可用时，用成分股等权日收益合成板块指数。"""
@@ -143,6 +150,7 @@ def prepare(cfg: dict, *, refresh_boards: bool = False,
 
     # 3) 个股日线（baostock chunk）
     stock_daily = load_stock_chunks(cache_dir)
+    stock_daily = _exclude_star(stock_daily, cfg)
 
     # 统一按配置截断历史：缓存可能远早于 start_date（增量缓存整包返回，
     # load_stock_chunks 也不按日期过滤），config 的 history.start_date 在此生效
