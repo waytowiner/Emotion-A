@@ -1,0 +1,57 @@
+# 板块情绪系统配置
+
+# 板块池：ths=同花顺行业板块(90个，白酒/证券/医药等齐全，主力口径)
+#         eastmoney=东财行业板块(本机 push2 接口被风控时不可用)
+#         baostock=证监会行业(兜底)
+board_source: ths
+
+# 历史数据范围
+history:
+  start_date: "2024-06-01"   # 数据起点（9·24 regime 前的缓冲，供平滑/分位计算）
+  regime_start: "2024-09-24" # 当前市场风格起点（政策转向）
+  adjust: ""                 # 不复权（情绪因子用真实涨跌幅）
+
+# 时序分位窗口（天）：随 regime 缩短，不再用一年的老数据
+score_lookback: 120
+
+# 回测窗口：最近 N 个交易日（适应当前风格）
+backtest_window: 180
+
+# 情绪分合成权重（各因子横截面 z-score 的权重，回测后可调）
+weights:
+  limit_up_strength: 1.0    # 涨停强度
+  money_effect: 1.0         # 赚钱效应
+  breadth: 1.0              # 涨跌宽度
+  fund_flow: 1.0            # 资金流（数据不可用时自动剔除并归一化）
+  rps: 1.0                  # 相对强度
+  turnover_heat: 1.0        # 热度变化
+  promotion_rate: 0.5       # 晋级率（题材向，权重减半）
+
+# 平滑窗口（周度情绪分）
+smooth_window: 5
+
+# 信号参数
+signal:
+  consecutive_days: 3        # 连续升/降温天数
+  hot_quantile: 0.9          # 亢奋分位
+  cold_quantile: 0.1         # 冰点分位
+  top_n: 3                   # 轮动回测持仓板块数
+
+# 回测参数
+backtest:
+  forward_days: [5, 10, 20]  # IC 前瞻收益窗口
+  rebalance: "W"             # 轮动调仓频率：周
+  cost_bps: 5                # 往返换仓成本（万分之）：每次换仓按持仓权重扣一次
+  benchmark: "等权全板块"
+
+# 网络
+network:
+  timeout: 15
+  max_retries: 6
+  backoff_base: 2.0          # 指数退避基数（秒）
+  use_system_proxy: false    # 本机代理对东财不稳定，默认直连
+
+# 路径
+paths:
+  cache_dir: "data/cache"
+  report_dir: "report"

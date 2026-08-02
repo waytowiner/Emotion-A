@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>板块情绪雷达</title>
+<style>
+:root {
+  --bg: #0a0e14;
+  --card: rgba(22, 27, 34, .68);
+  --card-solid: #161b22;
+  --border: rgba(255, 255, 255, .07);
+  --border-hover: rgba(240, 185, 11, .35);
+  --text: #e6edf3; --text-dim: #8b949e; --text-faint: #6e7681;
+  --up: #ea3943; --up-soft: #ff6b74;
+  --down: #0ecb81; --down-soft: #4fe3a5;
+  --gold: #f0b90b; --accent: #58a6ff; --purple: #bc8cff;
+  --mono: "Cascadia Code", Consolas, "Courier New", monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  background:
+    radial-gradient(1100px 550px at 85% -8%, rgba(240, 185, 11, .07), transparent 60%),
+    radial-gradient(900px 500px at -5% 105%, rgba(234, 57, 67, .06), transparent 60%),
+    radial-gradient(700px 400px at 50% 50%, rgba(88, 166, 255, .03), transparent 70%),
+    var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  font-size: 14px; line-height: 1.6; min-height: 100vh;
+}
+body::before {  /* 极淡网格 */
+  content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    linear-gradient(rgba(255,255,255,.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.018) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+a { color: var(--accent); text-decoration: none; }
+.num, td, th { font-variant-numeric: tabular-nums; }
+
+/* ---------- 顶部加载条 ---------- */
+#loadbar {
+  position: fixed; top: 0; left: 0; height: 2px; width: 100%; z-index: 1000;
+  opacity: 0; transition: opacity .25s; overflow: hidden;
+}
+#loadbar.on { opacity: 1; }
+#loadbar i {
+  display: block; height: 100%; width: 40%;
+  background: linear-gradient(90deg, transparent, var(--gold), var(--up), transparent);
+  animation: slide 1.1s linear infinite;
+}
+@keyframes slide { from { transform: translateX(-100%);} to { transform: translateX(350%);} }
+
+/* ---------- 顶部栏 ---------- */
+.topbar {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding: 12px 24px; border-bottom: 1px solid var(--border);
+  background: rgba(13, 17, 23, .8); backdrop-filter: blur(14px);
+  position: sticky; top: 0; z-index: 100;
+}
+.logo { font-size: 19px; font-weight: 800; letter-spacing: 1px; }
+.logo .radar {
+  background: linear-gradient(100deg, var(--gold), var(--up));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.topbar .date { color: var(--text-dim); font-size: 12.5px; }
+.health-lamp {
+  display: flex; align-items: center; gap: 9px; padding: 5px 15px;
+  border: 1px solid var(--border); border-radius: 22px;
+  background: rgba(255,255,255,.03);
+}
+.lamp-dot { width: 13px; height: 13px; border-radius: 50%; position: relative; }
+.lamp-dot::after {
+  content: ""; position: absolute; inset: -5px; border-radius: 50%;
+  background: inherit; filter: blur(7px); opacity: .85;
+  animation: breathe 2.2s ease-in-out infinite;
+}
+@keyframes breathe { 0%,100% { opacity: .35; transform: scale(.85);} 50% { opacity: .95; transform: scale(1.15);} }
+.lamp-dot.g { background: #2fe08c; } .lamp-dot.y { background: var(--gold); } .lamp-dot.r { background: var(--up); }
+.lamp-text { font-size: 13px; font-weight: 600; }
+.lamp-sub { font-size: 11px; color: var(--text-faint); }
+.spacer { flex: 1; }
+.btn {
+  background: linear-gradient(135deg, rgba(240,185,11,.16), rgba(234,57,67,.12));
+  color: var(--text); border: 1px solid rgba(240,185,11,.4);
+  border-radius: 8px; padding: 6px 18px; cursor: pointer; font-size: 13px;
+  transition: all .2s;
+}
+.btn:hover { border-color: var(--gold); box-shadow: 0 0 14px rgba(240,185,11,.25); transform: translateY(-1px); }
+.btn:disabled { opacity: .55; cursor: not-allowed; transform: none; box-shadow: none; }
+.spin { display: inline-block; animation: rot 1s linear infinite; }
+@keyframes rot { to { transform: rotate(360deg); } }
+
+/* ---------- Tab 导航 ---------- */
+.tabs {
+  display: flex; gap: 6px; padding: 0 24px; border-bottom: 1px solid var(--border);
+  background: rgba(13, 17, 23, .8); backdrop-filter: blur(14px);
+}
+.tab {
+  padding: 11px 22px; cursor: pointer; color: var(--text-dim);
+  border-bottom: 2px solid transparent; font-size: 14px; user-select: none;
+  transition: color .2s;
+}
+.tab:hover { color: var(--text); }
+.tab.active {
+  color: var(--gold); font-weight: 700;
+  border-image: linear-gradient(90deg, var(--gold), var(--up)) 1;
+}
+
+/* ---------- 布局 ---------- */
+.container { max-width: 1280px; margin: 0 auto; padding: 22px 24px 60px; position: relative; z-index: 1; }
+.tab-page { display: none; }
+.tab-page.active { display: block; animation: fadeUp .4s both; }
+.card {
+  background: var(--card); backdrop-filter: blur(12px);
+  border: 1px solid var(--border); border-radius: 14px;
+  padding: 18px 22px; margin-bottom: 18px;
+  transition: transform .25s, box-shadow .25s, border-color .25s;
+  animation: fadeUp .55s both;
+}
+.card:hover {
+  transform: translateY(-3px); border-color: var(--border-hover);
+  box-shadow: 0 10px 32px rgba(0,0,0,.5), 0 0 22px rgba(240,185,11,.05);
+}
+/* 错峰淡入 */
+.grid .card:nth-child(1) { animation-delay: .02s; } .grid .card:nth-child(2) { animation-delay: .07s; }
+.grid .card:nth-child(3) { animation-delay: .12s; } .grid .card:nth-child(4) { animation-delay: .17s; }
+.grid .card:nth-child(5) { animation-delay: .22s; } .grid .card:nth-child(6) { animation-delay: .27s; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+.card h3 { font-size: 15px; font-weight: 700; margin-bottom: 12px; letter-spacing: .3px; }
+.card .hint { color: var(--text-faint); font-size: 12px; font-weight: 400; margin-left: 8px; }
+.grid { display: grid; gap: 16px; }
+.grid-5 { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.grid-2 { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+
+/* ---------- 信号卡片 ---------- */
+.sig-card { min-height: 128px; }
+.sig-card .sig-title { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.sig-card .sig-title b { font-size: 15px; }
+.sig-card .sig-title .cnt { color: var(--text-faint); font-size: 12px; }
+.sig-card .sig-desc { color: var(--text-faint); font-size: 11px; margin-bottom: 10px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 11px; margin: 0 6px 7px 0; border-radius: 14px;
+  background: rgba(255,255,255,.045); border: 1px solid var(--border);
+  font-size: 12px; cursor: pointer; transition: all .18s;
+}
+.chip:hover {
+  transform: scale(1.07); border-color: var(--gold);
+  box-shadow: 0 0 12px rgba(240,185,11,.22); color: var(--gold);
+}
+.chip .c { font-family: var(--mono); font-size: 11px; color: var(--gold); }
+.chip.more { cursor: pointer; color: var(--text-faint); }
+.sig-heating b { color: var(--up-soft); } .sig-cooling b { color: var(--down-soft); }
+.sig-hot b { color: var(--gold); } .sig-cold b { color: var(--accent); }
+.sig-switch b { color: var(--purple); }
+
+/* ---------- ETF pill ---------- */
+.etf-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 1px 10px; border-radius: 20px; margin: 1px 4px 1px 0;
+  background: rgba(240,185,11,.09); border: 1px solid rgba(240,185,11,.32);
+  font-size: 11.5px; white-space: nowrap;
+}
+.etf-pill b { font-family: var(--mono); color: var(--gold); font-weight: 700; letter-spacing: .4px; }
+.etf-pill span { color: var(--text-dim); }
+.etf-none { color: var(--text-faint); font-size: 11.5px; }
+
+/* ---------- 龙头股 pill / 卡片 ---------- */
+.leader-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 1px 10px; border-radius: 20px; margin: 1px 4px 1px 0;
+  background: rgba(57, 197, 207, .08); border: 1px solid rgba(57, 197, 207, .35);
+  font-size: 11.5px; white-space: nowrap; cursor: help;
+}
+.leader-pill b { font-family: var(--mono); color: #39c5cf; font-weight: 700; letter-spacing: .4px; }
+.leader-pill span { color: var(--text-dim); }
+.leader-pill .tag {
+  font-size: 10px; color: #39c5cf; border: 1px solid rgba(57,197,207,.5);
+  border-radius: 8px; padding: 0 5px; line-height: 1.5;
+}
+.chip .lc { font-family: var(--mono); font-size: 11px; color: #39c5cf; }
+.leaders-wrap { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
+.leader-card {
+  padding: 10px 16px; border-radius: 12px; min-width: 240px;
+  background: rgba(57, 197, 207, .05); border: 1px solid rgba(57, 197, 207, .22);
+}
+.leader-card .l-title { font-size: 12px; color: #39c5cf; font-weight: 700; margin-bottom: 6px; }
+.leader-card .l-row {
+  display: flex; align-items: baseline; gap: 8px; font-size: 13px; padding: 2px 0;
+}
+.leader-card .l-row .code { font-family: var(--mono); color: #39c5cf; font-weight: 700; }
+.leader-card .l-row .amt { color: var(--text-faint); font-size: 11.5px; margin-left: auto; }
+.streak-badge {
+  font-size: 10.5px; color: var(--up-soft); border: 1px solid var(--up);
+  border-radius: 9px; padding: 0 7px; margin-left: auto; white-space: nowrap;
+}
+
+/* ---------- 图表 ---------- */
+.chart { width: 100%; }
+#chart-diverge { height: 520px; }
+#chart-ic { height: 300px; }
+#chart-quant { height: 300px; }
+#chart-nav { height: 420px; }
+#chart-board-dual { height: 380px; }
+#chart-board-pct { height: 260px; }
+
+/* ---------- 表格 ---------- */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 9px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+th { color: var(--text-dim); font-weight: 600; font-size: 12px; letter-spacing: .4px; position: sticky; top: 0; background: rgba(22,27,34,.95); backdrop-filter: blur(6px); }
+th.l, td.l { text-align: left; }
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--gold); }
+tbody tr { cursor: pointer; transition: background .15s, box-shadow .15s; }
+tbody tr:hover {
+  background: linear-gradient(90deg, rgba(240,185,11,.07), rgba(240,185,11,.02) 60%, transparent);
+  box-shadow: inset 2px 0 0 var(--gold);
+}
+.num-up { color: var(--up-soft); } .num-down { color: var(--down-soft); }
+.score-cell { font-weight: 700; }
+.badge {
+  display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px;
+  margin-right: 4px; border: 1px solid;
+}
+.badge-heating { color: var(--up-soft); border-color: var(--up); }
+.badge-cooling { color: var(--down-soft); border-color: var(--down); }
+.badge-hot { color: var(--gold); border-color: var(--gold); }
+.badge-cold { color: var(--accent); border-color: var(--accent); }
+.badge-switching_from { color: var(--purple); border-color: var(--purple); }
+.pct-bar { position: relative; width: 90px; height: 8px; background: rgba(255,255,255,.06); border-radius: 5px; display: inline-block; vertical-align: middle; margin-right: 8px; overflow: hidden; }
+.pct-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; }
+
+/* ---------- 结论卡 / 风险条 ---------- */
+.hero {
+  font-size: 17px; line-height: 1.9;
+  border: 1px solid transparent;
+  background:
+    linear-gradient(rgba(22,27,34,.88), rgba(22,27,34,.88)) padding-box,
+    linear-gradient(120deg, rgba(240,185,11,.55), rgba(234,57,67,.45), rgba(88,166,255,.3)) border-box;
+}
+.hero b { font-size: 24px; font-weight: 800; padding: 0 2px; }
+.risk-banner {
+  background: rgba(234, 57, 67, .07); border: 1px solid rgba(234, 57, 67, .32);
+  color: #ff9aa2; border-radius: 12px; padding: 13px 18px; font-size: 13px;
+  backdrop-filter: blur(8px);
+}
+
+/* ---------- 因子卡片 / ETF 卡 ---------- */
+.factor-card { padding: 15px 17px; }
+.factor-card .f-name { font-weight: 700; margin-bottom: 2px; }
+.factor-card .f-desc { color: var(--text-faint); font-size: 11px; min-height: 34px; }
+.factor-card .f-value { font-size: 23px; font-weight: 800; margin: 6px 0 2px; }
+.factor-card .f-rank { color: var(--text-dim); font-size: 12px; }
+.etf-cards { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
+.etf-card {
+  display: flex; align-items: center; gap: 14px; padding: 10px 18px;
+  border-radius: 12px; background: rgba(240,185,11,.06);
+  border: 1px solid rgba(240,185,11,.28);
+}
+.etf-card .e-code { font-family: var(--mono); font-size: 18px; font-weight: 800; color: var(--gold); }
+.etf-card .e-name { font-size: 13px; color: var(--text); }
+.etf-card .e-price { font-size: 15px; font-weight: 700; }
+.etf-card .e-sub { font-size: 11px; color: var(--text-faint); }
+
+/* ---------- 骨架屏 ---------- */
+.skeleton { position: relative; overflow: hidden; background: rgba(255,255,255,.04); border-radius: 8px; }
+.skeleton::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.06), transparent);
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer { 0% { transform: translateX(-100%);} 100% { transform: translateX(100%);} }
+.sk-line { height: 16px; margin: 10px 0; }
+.sk-block { height: 240px; }
+
+/* ---------- Toast ---------- */
+#toast-wrap { position: fixed; top: 64px; right: 24px; z-index: 999; }
+.toast {
+  background: rgba(45, 33, 41, .92); backdrop-filter: blur(10px);
+  border: 1px solid var(--up); color: #ff9aa2;
+  padding: 10px 18px; border-radius: 10px; margin-bottom: 8px; font-size: 13px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5); animation: slidein .25s ease-out;
+}
+.toast.ok { border-color: var(--down); color: #6ff0b6; background: rgba(20, 40, 30, .92); }
+@keyframes slidein { from { transform: translateX(30px); opacity: 0; } }
+
+/* ---------- 板块选择 ---------- */
+.board-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.board-head select {
+  background: rgba(255,255,255,.05); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 7px 13px; font-size: 14px; min-width: 230px; outline: none;
+}
+.board-head select:focus { border-color: var(--gold); }
+.board-head option { background: var(--card-solid); }
+.board-title { font-size: 19px; font-weight: 800; }
+.board-sub { color: var(--text-dim); font-size: 13px; }
+.legend-note { color: var(--text-faint); font-size: 12px; margin-top: 8px; }
+.table-wrap { max-height: 560px; overflow-y: auto; }
+.table-wrap::-webkit-scrollbar { width: 8px; }
+.table-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<div id="loadbar"><i></i></div>
+
+<header class="topbar">
+  <div class="logo">板块情绪<span class="radar">雷达</span></div>
+  <div class="date" id="data-date">数据日期：--</div>
+  <div class="health-lamp" id="health-lamp" style="display:none">
+    <span class="lamp-dot" id="lamp-dot"></span>
+    <span>
+      <span class="lamp-text" id="lamp-text"></span><br>
+      <span class="lamp-sub" id="lamp-sub"></span>
+    </span>
+  </div>
+  <div class="spacer"></div>
+  <span class="date" id="refresh-msg"></span>
+  <button class="btn" id="btn-refresh">⟳ 刷新数据</button>
+</header>
+
+<nav class="tabs">
+  <div class="tab active" data-tab="today">今日榜单</div>
+  <div class="tab" data-tab="backtest">回测验证</div>
+  <div class="tab" data-tab="board">板块详情</div>
+</nav>
+
+<main class="container">
+
+  <!-- ============ Tab1 今日榜单 ============ -->
+  <section class="tab-page active" id="page-today">
+    <div class="grid grid-5" id="sig-cards"></div>
+
+    <div class="card">
+      <h3>情绪分排名<span class="hint">左绿右红，越长代表情绪越极端；点击板块名可看详情</span></h3>
+      <div id="chart-diverge" class="chart"></div>
+    </div>
+
+    <div class="card">
+      <h3>完整排名<span class="hint">点击表头可排序，点击行进入板块详情；ETF 列给出可直接交易的标的</span></h3>
+      <div class="table-wrap">
+        <table id="rank-table">
+          <thead><tr>
+            <th class="l">排名</th>
+            <th class="l">板块</th>
+            <th class="sortable" data-sort="score">情绪分 <span class="sort-mark"></span></th>
+            <th class="sortable" data-sort="pct">时序分位 <span class="sort-mark"></span></th>
+            <th class="l">对应ETF</th>
+            <th class="l">信号</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ Tab2 回测验证 ============ -->
+  <section class="tab-page" id="page-backtest">
+    <div class="card hero" id="bt-hero"></div>
+
+    <div class="card">
+      <h3>信号健康度走势<span class="hint">每日滚动 60 日的 IC 均值；在 0 轴上方说明打分近期能预测涨跌</span></h3>
+      <div id="chart-ic" class="chart"></div>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>分层收益<span class="hint">把板块按情绪分分 5 组，看各组随后 5 天的平均收益</span></h3>
+        <div id="chart-quant" class="chart"></div>
+      </div>
+      <div class="card">
+        <h3>打分到底有没有用？<span class="hint">IC 解读</span></h3>
+        <div class="table-wrap" style="max-height:200px">
+          <table id="ic-table">
+            <thead><tr><th class="l">前瞻窗口</th><th>IC 均值</th><th>IR</th><th>IC 胜率</th><th>样本数</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="legend-note" id="ic-note"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>轮动净值曲线<span class="hint">每周按榜单调仓的模拟表现（含手续费，用板块指数近似代替 ETF）；点击图例可隐藏/显示</span></h3>
+      <div id="chart-nav" class="chart"></div>
+    </div>
+
+    <div class="card">
+      <h3>绩效指标<span class="hint">最近回测窗口内，三种玩法 vs 等权基准</span></h3>
+      <div class="table-wrap">
+        <table id="perf-table">
+          <thead><tr>
+            <th class="l">策略</th><th>年化收益</th><th>夏普</th>
+            <th>最大回撤</th><th>期末净值</th><th>换仓成本损耗</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="risk-banner">
+      ⚠ 风险提示：以上全部是历史数据的模拟结果，回测赚钱不代表未来赚钱。
+      情绪信号会随市场风格失效（看上方健康度），请勿据此直接实盘交易。
+    </div>
+  </section>
+
+  <!-- ============ Tab3 板块详情 ============ -->
+  <section class="tab-page" id="page-board">
+    <div class="card">
+      <div class="board-head">
+        <select id="board-select"></select>
+        <span class="board-title" id="board-title">--</span>
+        <span id="board-badges"></span>
+        <span class="board-sub" id="board-sub"></span>
+      </div>
+      <div class="etf-cards" id="board-etfs"></div>
+      <div class="leaders-wrap" id="board-leaders"></div>
+    </div>
+
+    <div class="card">
+      <h3>情绪分 vs 板块指数<span class="hint">近 120 天；情绪分（左轴）领先于价格时最有参考价值</span></h3>
+      <div id="chart-board-dual" class="chart"></div>
+    </div>
+
+    <div class="card">
+      <h3>时序分位<span class="hint">情绪分在自身历史中的位置；高于 90% 偏亢奋，低于 10% 偏冰点</span></h3>
+      <div id="chart-board-pct" class="chart"></div>
+    </div>
+
+    <h3 style="margin: 4px 0 12px">最新因子体检<span class="hint" style="color:var(--text-faint);font-size:12px;font-weight:400">构成情绪分的 6 个原材料（<span id="factor-date"></span>）</span></h3>
+    <div class="grid" id="factor-cards" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))"></div>
+  </section>
+
+</main>
+
+<div id="toast-wrap"></div>
+
+<script src="/vendor/echarts.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

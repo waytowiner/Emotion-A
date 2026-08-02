@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 数据与缓存（体积大，可重新抓取/生成）
+data/
+
+# 生成产物
+report/
+
+# 本地记忆
+.workbuddy/
+
+# 日志
+*.log
+
+# 虚拟环境
+.venv/
+venv/
