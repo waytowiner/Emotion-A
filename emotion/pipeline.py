@@ -19,6 +19,23 @@ def load_config(path: str | Path | None = None) -> dict:
         return yaml.safe_load(f)
 
 
+def cache_end_date(cfg: dict) -> str:
+    """板块K线缓存的最新交易日。用于避免增量网络抓取（传输层可能进程级崩溃）。"""
+    cache_dir = ROOT / cfg["paths"]["cache_dir"]
+    files = sorted(Path(cache_dir).glob("board_kline_*.parquet"))
+    last = None
+    for f in files:
+        try:
+            d = pd.read_parquet(f)["date"].max()
+            if last is None or d > last:
+                last = d
+        except Exception:  # noqa: BLE001
+            continue
+    if last is None:
+        return pd.Timestamp.today().strftime("%Y-%m-%d")
+    return last.strftime("%Y-%m-%d")
+
+
 def load_stock_chunks(cache_dir: str | Path) -> pd.DataFrame:
     """读取后台抓取的全部个股日线 chunk，合并为长表。"""
     chunk_dir = Path(cache_dir) / "stock_chunks"
@@ -54,11 +71,15 @@ def build_board_kline_from_stocks(stock_daily: pd.DataFrame,
     return g[["board_code", "date", "close", "pct_chg", "amount"]]
 
 
-def prepare(cfg: dict, *, refresh_boards: bool = False) -> dict:
-    """返回 {stock_daily, board_map, board_kline, boards(DataFrame), board_names, market_total}。"""
+def prepare(cfg: dict, *, refresh_boards: bool = False,
+            end_override: str | None = None) -> dict:
+    """返回 {stock_daily, board_map, board_kline, boards(DataFrame), board_names, market_total}。
+
+    end_override：统一截断日期（不触发增量网络抓取时用缓存截止日）。
+    """
     cache_dir = ROOT / cfg["paths"]["cache_dir"]
     start = cfg["history"]["start_date"]
-    end = pd.Timestamp.today().strftime("%Y-%m-%d")
+    end = end_override or pd.Timestamp.today().strftime("%Y-%m-%d")
 
     # 1) 板块映射（东财行业板块优先，同花顺备用，baostock 行业兜底）
     board_source = cfg.get("board_source", "eastmoney")

@@ -20,7 +20,8 @@ def main() -> None:
 
     cfg = pipeline.load_config()
     print("[1/4] 准备数据 ...")
-    data = pipeline.prepare(cfg, refresh_boards=args.refresh_boards)
+    data = pipeline.prepare(cfg, refresh_boards=args.refresh_boards,
+                            end_override=pipeline.cache_end_date(cfg))
     print(f"      板块 {data['board_map']['board_code'].nunique()} 个，"
           f"个股 {data['stock_daily']['code'].nunique()} 只，"
           f"日线 {len(data['stock_daily'])} 行")

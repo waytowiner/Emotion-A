@@ -19,8 +19,8 @@ pip install -r requirements.txt
 python scripts/fetch_stock_history.py 2023-01-01
 
 # 2) 抓取板块列表/成分/板块指数（约 10 分钟）
-#    板块源由 config.yaml 的 board_source 决定：ths 用 fetch_ths_boards.py，eastmoney 用 fetch_board_data.py
-python scripts/fetch_ths_boards.py   # 当前默认 board_source=ths
+#    板块源由 config.yaml 的 board_source 决定：eastmoney 用 fetch_board_data.py，ths 用 fetch_ths_boards.py
+python scripts/fetch_board_data.py   # 当前默认 board_source=eastmoney
 
 # 3) 每日情绪报告 -> report/report_YYYYMMDD.md + scores_YYYYMMDD.csv
 python main.py
@@ -70,19 +70,19 @@ python -m pytest tests/ -q
 |---|---|---|---|---|
 | 9·24 之前（2023-01~2024-09） | -0.037 | 44% | 高情绪→跑输 | 反向（缩量市） |
 | 9·24 之后至 2025 年末 | -0.001 | 51% | 无区分度 | 失效 |
-| **最近 180 交易日** | **+0.072** | **61%** | Q1→Q5 单调递增 | **正向有效（动量市）** |
+| **最近 180 交易日** | **+0.077** | **61%** | Q1→Q5 单调递增 | **正向有效（动量市）** |
 
-最近 180 天周度轮动（东财 100 行业板块口径）：
+最近 180 天周度轮动（东财 100 行业板块口径，2026-08-02 修复数据重跑）：
 
-> ⚠️ **口径敏感**：同一窗口切到同花顺 90 板块口径（当前 `config.yaml: board_source: ths`）时，
-> IC(5日) 降至约 +0.017、Top3 年化降至约 +6%，**低于本表所列水平且低于 0.03 显著性阈值**。
+> ⚠️ **口径敏感**：同一窗口切到同花顺 90 板块口径时，IC(5日) 约 +0.017、Top3 年化约 -13%，
+> **低于 0.03 显著性阈值**，榜单仅供情绪观察、不可用于交易。
 > 下方数字仅代表东财 100 口径；改 `board_source` 后必须重跑回测，结论不可直接套用。
 
 | 策略 | 年化 | 夏普 | 最大回撤 | 对照基准 |
 |---|---|---|---|---|
-| 买入情绪 Top3（顺势追涨） | **+101.7%** | 1.86 | -32.7% | +1.6% |
-| 买入情绪 Bottom3（抄底） | -27.4% | -0.72 | -34.9% | +1.6% |
-| 回避 Top3 | -2.5% | 0.06 | -24.3% | +1.6% |
+| 买入情绪 Top3（顺势追涨） | **+24.4%** | 0.72 | -41.8% | +0.3% |
+| 买入情绪 Bottom3（抄底） | -16.8% | -0.36 | -28.8% | +0.3% |
+| 回避 Top3 | -0.4% | 0.13 | -23.6% | +0.3% |
 
 **使用纪律（重要）：**
 1. 信号**只在当前动量风格下顺势使用**——每天先看日报顶部的"信号健康度"

@@ -17,7 +17,7 @@ from emotion.factors import compute_all_factors
 def main() -> None:
     cfg = pipeline.load_config()
     print("[1/4] 准备数据 ...")
-    data = pipeline.prepare(cfg)
+    data = pipeline.prepare(cfg, end_override=pipeline.cache_end_date(cfg))
 
     print("[2/4] 计算情绪因子 ...")
     factors = compute_all_factors(data["stock_daily"], data["board_map"],

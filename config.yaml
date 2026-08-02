@@ -1,9 +1,9 @@
 # 板块情绪系统配置
 
-# 板块池：ths=同花顺行业板块(90个，白酒/证券/医药等齐全，主力口径)
-#         eastmoney=东财行业板块(本机 push2 接口被风控时不可用)
+# 板块池：eastmoney=东财行业板块(100个，细分，回测 IC 有效，主用口径)
+#         ths=同花顺行业板块(90个，IC 低于 0.03 阈值，仅供观察)
 #         baostock=证监会行业(兜底)
-board_source: ths
+board_source: eastmoney
 
 # 历史数据范围
 history:
