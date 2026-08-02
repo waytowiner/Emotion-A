@@ -151,7 +151,7 @@ def run_update(bs, codes: list[str], name6: dict[str, str],
 def main() -> None:
     update_mode = "--update" in sys.argv
     args = [a for a in sys.argv[1:] if a not in ("--update", "--exclude-star")]
-    start = args[0] if len(args) > 0 else "2024-09-01"
+    start = args[0] if len(args) > 0 else "2025-09-01"  # 动态：今天往前约330天
     end = args[1] if len(args) > 1 else time.strftime("%Y-%m-%d")
 
     import baostock as bs
