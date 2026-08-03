@@ -1,95 +1,88 @@
 @echo off
 chcp 65001 >nul
-title 板块情绪雷达 - Emotion-A
+set PYTHON=C:\Python312\python.exe
+title Emotion-A Board Sentiment Radar
 
-:menu
+:MENU
 cls
-echo ========================================
-echo         板块情绪雷达 Emotion-A
-echo ========================================
+echo ============================================================
+echo            Emotion-A  Board Sentiment Radar
+echo ============================================================
 echo.
-echo   [1] 一键更新全部 (增量抓取 + 报告 + 看板)
-echo   [2] 增量更新个股数据 (20-40 分钟)
-echo   [3] 生成今日情绪报告
-echo   [4] 导出看板数据
-echo   [5] 启动 Web 看板服务器
-echo   [6] 运行回测验证
-echo   [0] 退出
+echo   [1] Update ALL (fetch stocks + report + dashboard)
+echo   [2] Fetch stock history only (incremental, 20-40 min)
+echo   [3] Generate daily sentiment report
+echo   [4] Dump dashboard data
+echo   [5] Start web dashboard server (http://127.0.0.1:8000)
+echo   [6] Run backtest
+echo   [0] Exit
 echo.
-set /p choice=请输入选项:
+set /p CHOICE=Enter choice:
 
-if "%choice%"=="1" goto update_all
-if "%choice%"=="2" goto update_stocks
-if "%choice%"=="3" goto gen_report
-if "%choice%"=="4" goto dump_dashboard
-if "%choice%"=="5" goto start_server
-if "%choice%"=="6" goto run_backtest
-if "%choice%"=="0" exit /b
-goto menu
+if "%CHOICE%"=="1" goto ALL
+if "%CHOICE%"=="2" goto FETCH
+if "%CHOICE%"=="3" goto REPORT
+if "%CHOICE%"=="4" goto DUMP
+if "%CHOICE%"=="5" goto SERVER
+if "%CHOICE%"=="6" goto BACKTEST
+if "%CHOICE%"=="0" exit /b
+goto MENU
 
-:update_all
+:ALL
 echo.
-echo [1/3] 增量更新个股数据...
-python scripts\fetch_stock_history.py --update
-if errorlevel 1 (
-    echo [警告] 个股数据更新失败，继续后续步骤...
-    timeout /t 3 >nul
-)
+echo [1/3] Fetching stock history (incremental)...
+%PYTHON% scripts\fetch_stock_history.py --update
 echo.
-echo [2/3] 生成情绪报告...
-python main.py
-if errorlevel 1 echo [失败] 报告生成出错
+echo [2/3] Generating daily report...
+%PYTHON% main.py
 echo.
-echo [3/3] 导出看板数据...
-python scripts\dump_dashboard_data.py
-if errorlevel 1 echo [失败] 看板导出出错
+echo [3/3] Dumping dashboard data...
+%PYTHON% scripts\dump_dashboard_data.py
 echo.
-echo 全部完成！按任意键返回菜单...
+echo ALL DONE. Press any key to return to menu...
 pause >nul
-goto menu
+goto MENU
 
-:update_stocks
+:FETCH
 echo.
-echo 正在增量更新个股数据（预计 20-40 分钟）...
-python scripts\fetch_stock_history.py --update
+echo Fetching stock history (incremental, 20-40 min)...
+%PYTHON% scripts\fetch_stock_history.py --update
 echo.
-echo 完成！按任意键返回菜单...
+echo Done. Press any key to return to menu...
 pause >nul
-goto menu
+goto MENU
 
-:gen_report
+:REPORT
 echo.
-echo 正在生成情绪报告...
-python main.py
+echo Generating daily sentiment report...
+%PYTHON% main.py
 echo.
-echo 完成！按任意键返回菜单...
+echo Done. Press any key to return to menu...
 pause >nul
-goto menu
+goto MENU
 
-:dump_dashboard
+:DUMP
 echo.
-echo 正在导出看板数据...
-python scripts\dump_dashboard_data.py
+echo Dumping dashboard data...
+%PYTHON% scripts\dump_dashboard_data.py
 echo.
-echo 完成！按任意键返回菜单...
+echo Done. Press any key to return to menu...
 pause >nul
-goto menu
+goto MENU
 
-:start_server
+:SERVER
 echo.
-echo 正在启动看板服务器 http://127.0.0.1:8000 ...
-echo 浏览器打开: http://127.0.0.1:8000/static/
-echo 按 Ctrl+C 停止服务器
-echo.
+echo Starting dashboard server at http://127.0.0.1:8000
+echo Browser opening automatically...
 start http://127.0.0.1:8000/static/
-python server.py
-goto menu
+%PYTHON% server.py
+goto MENU
 
-:run_backtest
+:BACKTEST
 echo.
-echo 正在运行回测...
-python backtest.py
+echo Running backtest...
+%PYTHON% backtest.py
 echo.
-echo 完成！报告已保存到 report/ 目录。按任意键返回菜单...
+echo Done. Report saved to report\ directory.
 pause >nul
-goto menu
+goto MENU
