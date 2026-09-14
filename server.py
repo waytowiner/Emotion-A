@@ -26,6 +26,7 @@ DUMP_SCRIPT = ROOT / "scripts" / "dump_dashboard_data.py"
 
 # ---------------- 数据加载（内存缓存，refresh 后重载） ----------------
 
+_state_lock = threading.Lock()
 _cache: dict = {}
 
 
@@ -38,9 +39,10 @@ def load_all() -> None:
     """把 data/dashboard/ 全部读入内存。"""
     global _cache
     if not DASH_DIR.exists() or not (DASH_DIR / "meta.json").exists():
-        _cache = {}
+        with _state_lock:
+            _cache = {}
         return
-    _cache = {
+    new_cache = {
         "latest": _read_json("latest.json"),
         "meta": _read_json("meta.json"),
         "backtest": _read_json("backtest.json"),
@@ -50,14 +52,18 @@ def load_all() -> None:
         "pct": pd.read_parquet(DASH_DIR / "pct.parquet"),
         "kline": pd.read_parquet(DASH_DIR / "board_kline.parquet"),
     }
+    with _state_lock:
+        _cache = new_cache
 
 
 def require_data() -> dict:
-    if not _cache:
+    with _state_lock:
+        c = _cache
+    if not c:
         raise HTTPException(
             status_code=503,
             detail="看板数据缺失：请先运行 python scripts/dump_dashboard_data.py")
-    return _cache
+    return c
 
 
 def _matrix_long(df: pd.DataFrame, value_name: str, days: int,
@@ -179,38 +185,44 @@ _refresh_state = {"running": False, "started_at": None, "finished_at": None,
 
 
 def _run_dump():
-    _refresh_state.update(running=True, started_at=time.strftime("%H:%M:%S"),
-                          ok=None, log_tail="")
+    with _state_lock:
+        _refresh_state.update(running=True, started_at=time.strftime("%H:%M:%S"),
+                              ok=None, log_tail="")
     try:
         proc = subprocess.run([sys.executable, str(DUMP_SCRIPT)],
                               cwd=str(ROOT), capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=900)
         tail = (proc.stdout + proc.stderr).strip().splitlines()[-8:]
-        _refresh_state["log_tail"] = "\n".join(tail)
-        _refresh_state["ok"] = proc.returncode == 0
+        with _state_lock:
+            _refresh_state["log_tail"] = "\n".join(tail)
+            _refresh_state["ok"] = proc.returncode == 0
         if proc.returncode == 0:
             load_all()
     except Exception as exc:  # noqa: BLE001
-        _refresh_state["ok"] = False
-        _refresh_state["log_tail"] = f"{type(exc).__name__}: {exc}"
+        with _state_lock:
+            _refresh_state["ok"] = False
+            _refresh_state["log_tail"] = f"{type(exc).__name__}: {exc}"
     finally:
-        _refresh_state["running"] = False
-        _refresh_state["finished_at"] = time.strftime("%H:%M:%S")
+        with _state_lock:
+            _refresh_state["running"] = False
+            _refresh_state["finished_at"] = time.strftime("%H:%M:%S")
 
 
 @app.post("/api/refresh")
 def api_refresh():
-    if _refresh_state["running"]:
-        return {"started": False, "message": "正在刷新中，请稍候"}
-    if _update_state["running"]:
-        return {"started": False, "message": "数据更新进行中，请稍候"}
+    with _state_lock:
+        if _refresh_state["running"]:
+            return {"started": False, "message": "正在刷新中，请稍候"}
+        if _update_state["running"]:
+            return {"started": False, "message": "数据更新进行中，请稍候"}
     threading.Thread(target=_run_dump, daemon=True).start()
     return {"started": True, "message": "已开始重新计算，约需 1-2 分钟"}
 
 
 @app.get("/api/refresh_status")
 def api_refresh_status():
-    return _refresh_state
+    with _state_lock:
+        return dict(_refresh_state)
 
 
 # ---------------- 数据更新（联网抓取全流程） ----------------
@@ -218,29 +230,49 @@ def api_refresh_status():
 # 零请求），个股日线走腾讯快照（单日 42 秒），baostock 仅在多日补抓时启用。
 # 已从启动流程移除，改为看板界面「更新数据」按钮触发本接口。
 
-UPDATE_STEPS = [
-    # (步骤名, 脚本, 额外参数, 超时秒)
-    ("板块成分/指数", "scripts/fetch_etf_boards.py", [], 1800),  # 中证可交易ETF池
-    ("个股日线增量", "scripts/fetch_stock_history.py", ["--update"], 3600),
-    ("情绪日报", "main.py", [], 900),
-    ("异动榜", "scripts/daily_anomaly.py", [], 900),
-    ("看板数据导出", "scripts/dump_dashboard_data.py", [], 900),
-]
+
+def get_update_steps() -> list[tuple[str, str, list[str], int]]:
+    """根据 config.yaml 中的 board_source 动态匹配板块源抓取脚本。"""
+    try:
+        from emotion.pipeline import load_config
+        cfg = load_config()
+        src = cfg.get("board_source", "etf")
+    except Exception:
+        src = "etf"
+
+    board_scripts = {
+        "etf": "scripts/fetch_etf_boards.py",
+        "eastmoney": "scripts/fetch_board_data.py",
+        "ths": "scripts/fetch_ths_boards.py",
+        "sw": "scripts/fetch_sw_boards.py",
+    }
+    board_script = board_scripts.get(src, "scripts/fetch_etf_boards.py")
+    return [
+        (f"板块成分/指数({src})", board_script, [], 1800),
+        ("个股日线增量", "scripts/fetch_stock_history.py", ["--update"], 3600),
+        ("情绪日报", "main.py", [], 900),
+        ("异动榜", "scripts/daily_anomaly.py", [], 900),
+        ("看板数据导出", "scripts/dump_dashboard_data.py", [], 900),
+    ]
+
 
 _update_state = {"running": False, "started_at": None, "finished_at": None,
                  "ok": None, "step": None, "steps": [], "log_tail": ""}
 
 
 def _run_update():
-    _update_state.update(running=True, started_at=time.strftime("%H:%M:%S"),
-                         finished_at=None, ok=None, step=None, log_tail="",
-                         steps=[{"label": label, "status": "pending", "secs": None}
-                                for label, _, _, _ in UPDATE_STEPS])
+    steps = get_update_steps()
+    with _state_lock:
+        _update_state.update(running=True, started_at=time.strftime("%H:%M:%S"),
+                             finished_at=None, ok=None, step=None, log_tail="",
+                             steps=[{"label": label, "status": "pending", "secs": None}
+                                    for label, _, _, _ in steps])
     ok = True
     try:
-        for i, (label, script, args, timeout) in enumerate(UPDATE_STEPS):
-            _update_state["step"] = label
-            _update_state["steps"][i]["status"] = "running"
+        for i, (label, script, args, timeout) in enumerate(steps):
+            with _state_lock:
+                _update_state["step"] = label
+                _update_state["steps"][i]["status"] = "running"
             t0 = time.time()
             try:
                 proc = subprocess.run([sys.executable, str(ROOT / script), *args],
@@ -248,32 +280,37 @@ def _run_update():
                                       encoding="utf-8", errors="replace",
                                       timeout=timeout)
             except Exception as exc:  # noqa: BLE001
-                _update_state["steps"][i]["status"] = "fail"
-                _update_state["log_tail"] = f"[{label}] {type(exc).__name__}: {exc}"
+                with _state_lock:
+                    _update_state["steps"][i]["status"] = "fail"
+                    _update_state["log_tail"] = f"[{label}] {type(exc).__name__}: {exc}"
                 ok = False
                 break
-            _update_state["steps"][i]["secs"] = round(time.time() - t0)
+            secs = round(time.time() - t0)
             tail = (proc.stdout + proc.stderr).strip().splitlines()
-            if tail:
-                _update_state["log_tail"] = f"[{label}] " + "\n".join(tail[-8:])
-            if proc.returncode != 0:
-                _update_state["steps"][i]["status"] = "fail"
-                ok = False
-                break
-            _update_state["steps"][i]["status"] = "ok"
+            with _state_lock:
+                _update_state["steps"][i]["secs"] = secs
+                if tail:
+                    _update_state["log_tail"] = f"[{label}] " + "\n".join(tail[-8:])
+                if proc.returncode != 0:
+                    _update_state["steps"][i]["status"] = "fail"
+                    ok = False
+                    break
+                _update_state["steps"][i]["status"] = "ok"
         if ok:
             load_all()
     finally:
-        _update_state.update(running=False, ok=ok,
-                             finished_at=time.strftime("%H:%M:%S"))
+        with _state_lock:
+            _update_state.update(running=False, ok=ok,
+                                 finished_at=time.strftime("%H:%M:%S"))
 
 
 @app.post("/api/update")
 def api_update():
-    if _update_state["running"]:
-        return {"started": False, "message": "数据更新进行中，请稍候"}
-    if _refresh_state["running"]:
-        return {"started": False, "message": "正在刷新中，请稍候"}
+    with _state_lock:
+        if _update_state["running"]:
+            return {"started": False, "message": "数据更新进行中，请稍候"}
+        if _refresh_state["running"]:
+            return {"started": False, "message": "正在刷新中，请稍候"}
     threading.Thread(target=_run_update, daemon=True).start()
     return {"started": True,
             "message": "已开始更新数据（抓取→日报→看板）：日常增量通常 1-5 分钟"
@@ -282,7 +319,8 @@ def api_update():
 
 @app.get("/api/update_status")
 def api_update_status():
-    return _update_state
+    with _state_lock:
+        return dict(_update_state)
 
 
 # ---------------- 静态页面 ----------------

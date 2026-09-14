@@ -93,7 +93,7 @@ def annual_return_text(stats: dict) -> str:
 
 def forward_returns(board_close: pd.DataFrame, days: int) -> pd.DataFrame:
     """板块收盘价的前瞻 days 日收益（T 收盘买入 -> T+days 收盘）。"""
-    return board_close.pct_change(days).shift(-days)
+    return board_close.pct_change(days, fill_method=None).shift(-days)
 
 
 def ic_analysis(score: pd.DataFrame, board_close: pd.DataFrame,
@@ -200,7 +200,7 @@ def rotation_backtest(score: pd.DataFrame, board_close: pd.DataFrame,
     """
     days_with_score = score.dropna(how="all").index
     rebal_dates = rebalance_dates(days_with_score, freq=freq)
-    daily_ret = board_close.pct_change()
+    daily_ret = board_close.pct_change(fill_method=None)
     cost = cost_bps / 10000.0
 
     holdings: list[str] = []
@@ -494,7 +494,7 @@ def regime_state(score: pd.DataFrame, board_close: pd.DataFrame, *,
                                  index=board_close.index[known_pos[ok]])
     hist = ic_known.dropna().tail(ic_window)
 
-    eq_ret = board_close.pct_change().mean(axis=1)
+    eq_ret = board_close.pct_change(fill_method=None).mean(axis=1)
     mkt_recent = eq_ret.tail(guard_days).sum()
     guard_hit = pd.notna(mkt_recent) and mkt_recent < guard_threshold
 

@@ -28,6 +28,7 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
     last_pct = pct.iloc[-1]
 
     src_label = {"ths": "同花顺行业", "eastmoney": "东财行业",
+                 "sw": "申万二级行业", "etf": "中证ETF行业/主题",
                  "baostock": "证监会行业"}
     if universe:
         src = src_label.get(universe.get("board_source"), universe.get("board_source", "?"))

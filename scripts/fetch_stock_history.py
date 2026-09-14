@@ -190,7 +190,7 @@ def _board_kline_calendar() -> tuple[str | None, set[str]]:
     cache_dir = ROOT / "data" / "cache"
     best_file = None
     best_last = None
-    for f in cache_dir.glob("board_kline_BK*.parquet"):
+    for f in cache_dir.glob("board_kline_*.parquet"):
         try:
             d = pd.read_parquet(f, columns=["date"])["date"]
         except Exception:  # noqa: BLE001

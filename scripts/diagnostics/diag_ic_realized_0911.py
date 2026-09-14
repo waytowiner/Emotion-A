@@ -6,7 +6,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 import pandas as pd
@@ -28,7 +28,6 @@ def main() -> None:
     print("情绪分时点 → 之后累计等权收益（Top5 追涨 vs Bottom5 vs 全市场等权）")
     for c in csvs:
         dt = c.stem.replace("scores_", "")
-        sc = pd.read_csv(c, index_col=0).iloc[:, 0] if len(pd.read_csv(c, index_col=0).columns) else None
         sc = pd.read_csv(c)
         # 列名可能是 board/name + score，自适应
         cols = sc.columns.tolist()

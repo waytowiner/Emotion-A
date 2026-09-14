@@ -75,25 +75,34 @@ def momentum_leaders(stock_daily: pd.DataFrame, board_map: pd.DataFrame,
     """
     dates = _last_dates(stock_daily, window)
     flagged = flag_limit_up(stock_daily[stock_daily["date"].isin(dates)].copy())
-    # 一股多板：只按 (code, board_code) 对去重，细分板块也能有自己的龙头股
-    m = board_map[["code", "board_code"]].drop_duplicates()
-    flagged = flagged.merge(m, on="code", how="inner")
 
-    rows = []
-    for (board, code), sub in flagged.groupby(["board_code", "code"]):
-        sub = sub.sort_values("date")
+    # 性能优化：股票的连板天数只与自身有关，与所属板块无关。
+    # 仅对窗口内至少有一次涨停的个股计算连板（全市场通常仅 ~200-400 只，避免上万个板块-个股切片）
+    has_lu_codes = set(flagged.loc[flagged["is_limit_up"], "code"])
+    if not has_lu_codes:
+        return {}
+
+    lu_flagged = flagged[flagged["code"].isin(has_lu_codes)].sort_values(["code", "date"])
+    code_stats = []
+    for code, sub in lu_flagged.groupby("code"):
         streak = _max_streak(sub["is_limit_up"].tolist())
         if streak == 0:
             continue
         last_lu = sub.loc[sub["is_limit_up"], "date"].max()
-        rows.append({"board_code": board, "code": code, "max_streak": streak,
-                     "last_limit_up": last_lu})
+        code_stats.append({"code": code, "max_streak": streak, "last_limit_up": last_lu})
+
+    if not code_stats:
+        return {}
+
+    code_df = pd.DataFrame(code_stats)
+    # 一股多板：合并板块归属，各细分板块均可获得对应龙头
+    m = board_map[["code", "board_code"]].drop_duplicates()
+    df = code_df.merge(m, on="code", how="inner")
+    if df.empty:
+        return {}
 
     names = _latest_names(stock_daily)
     out: dict[str, list[dict]] = {}
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return out
     for board, sub in df.groupby("board_code"):
         top = sub.sort_values(["max_streak", "last_limit_up"],
                               ascending=[False, False]).head(top_n)

@@ -143,10 +143,12 @@ def build_board_kline_from_stocks(stock_daily: pd.DataFrame,
 
 
 def prepare(cfg: dict, *, refresh_boards: bool = False,
-            end_override: str | None = None) -> dict:
+            end_override: str | None = None,
+            offline: bool = False) -> dict:
     """返回 {stock_daily, board_map, board_kline, boards(DataFrame), board_names, market_total}。
 
     end_override：统一截断日期（不触发增量网络抓取时用缓存截止日）。
+    offline：是否强制纯离线模式（只读本地已存缓存，不发起任何网络请求）。
     """
     cache_dir = ROOT / cfg["paths"]["cache_dir"]
     start = cfg["history"]["start_date"]
@@ -180,7 +182,8 @@ def prepare(cfg: dict, *, refresh_boards: bool = False,
             for _, row in boards.iterrows():
                 try:
                     k = boards_ths.get_board_kline_ths(
-                        cache_dir, row["board_name"], start, end, refresh=refresh_boards)
+                        cache_dir, row["board_name"], start, end, refresh=refresh_boards,
+                        offline=offline)
                     kframes.append(k.assign(board_code=row["board_code"]))
                 except Exception as exc:  # noqa: BLE001
                     kline_fail += 1
@@ -204,27 +207,31 @@ def prepare(cfg: dict, *, refresh_boards: bool = False,
         try:
             from .data import boards_sw
             boards = boards_sw.get_board_list_sw(cache_dir, refresh=refresh_boards)
-            frames, cons_fail = [], 0
-            for _, row in boards.iterrows():
-                try:
-                    cons = boards_sw.get_board_cons_sw(
-                        cache_dir, row["board_code"], refresh=refresh_boards)
-                    frames.append(cons.assign(board_code=row["board_code"],
-                                              board_name=row["board_name"]))
-                except Exception as exc:  # noqa: BLE001
-                    cons_fail += 1
-                    if cons_fail <= 3:
-                        print(f"[warn] 申万成分缺失 {row['board_name']}: {str(exc)[:60]}")
-            if frames:
-                board_map = pd.concat(frames, ignore_index=True)
-            if cons_fail:
-                print(f"[warn] 申万成分：{cons_fail}/{len(boards)} 个板块失败")
+            all_sw_cons = cache_dir / "all_cons_sw.parquet"
+            if not refresh_boards and all_sw_cons.exists():
+                board_map = pd.read_parquet(all_sw_cons)
+            else:
+                frames, cons_fail = [], 0
+                for _, row in boards.iterrows():
+                    try:
+                        cons = boards_sw.get_board_cons_sw(
+                            cache_dir, row["board_code"], refresh=refresh_boards)
+                        frames.append(cons.assign(board_code=row["board_code"],
+                                                  board_name=row["board_name"]))
+                    except Exception as exc:  # noqa: BLE001
+                        cons_fail += 1
+                        if cons_fail <= 3:
+                            print(f"[warn] 申万成分缺失 {row['board_name']}: {str(exc)[:60]}")
+                if frames:
+                    board_map = pd.concat(frames, ignore_index=True)
+                if cons_fail:
+                    print(f"[warn] 申万成分：{cons_fail}/{len(boards)} 个板块失败")
             kframes, kline_fail = [], 0
             for _, row in boards.iterrows():
                 try:
                     k = boards_sw.get_board_kline_sw(
                         cache_dir, row["board_code"], start, end,
-                        refresh=refresh_boards)
+                        refresh=refresh_boards, offline=offline)
                     kframes.append(k.assign(board_code=row["board_code"]))
                 except Exception as exc:  # noqa: BLE001
                     kline_fail += 1
@@ -240,28 +247,34 @@ def prepare(cfg: dict, *, refresh_boards: bool = False,
         # 可交易 ETF 板块池（中证行业/主题指数，全部有跟踪产品=买得到）
         try:
             from .data import boards_etf
-            boards = boards_etf.get_board_list_etf(cache_dir, refresh=refresh_boards)
-            frames, cons_fail = [], 0
-            for _, row in boards.iterrows():
-                try:
-                    cons = boards_etf.get_board_cons_etf(
-                        cache_dir, row["board_code"], refresh=refresh_boards)
-                    frames.append(cons.assign(board_code=row["board_code"],
-                                              board_name=row["board_name"]))
-                except Exception as exc:  # noqa: BLE001
-                    cons_fail += 1
-                    if cons_fail <= 3:
-                        print(f"[warn] ETF板块成分缺失 {row['board_name']}: {str(exc)[:60]}")
-            if frames:
-                board_map = pd.concat(frames, ignore_index=True)
-            if cons_fail:
-                print(f"[warn] ETF板块成分：{cons_fail}/{len(boards)} 个失败")
+            boards = boards_etf.get_board_list_etf(cache_dir, refresh=refresh_boards,
+                                                  offline=offline)
+            all_etf_cons = cache_dir / "all_cons_etf.parquet"
+            if not refresh_boards and all_etf_cons.exists():
+                board_map = pd.read_parquet(all_etf_cons)
+            else:
+                frames, cons_fail = [], 0
+                for _, row in boards.iterrows():
+                    try:
+                        cons = boards_etf.get_board_cons_etf(
+                            cache_dir, row["board_code"], refresh=refresh_boards,
+                            offline=offline)
+                        frames.append(cons.assign(board_code=row["board_code"],
+                                                  board_name=row["board_name"]))
+                    except Exception as exc:  # noqa: BLE001
+                        cons_fail += 1
+                        if cons_fail <= 3:
+                            print(f"[warn] ETF板块成分缺失 {row['board_name']}: {str(exc)[:60]}")
+                if frames:
+                    board_map = pd.concat(frames, ignore_index=True)
+                if cons_fail:
+                    print(f"[warn] ETF板块成分：{cons_fail}/{len(boards)} 个失败")
             kframes, kline_fail = [], 0
             for _, row in boards.iterrows():
                 try:
                     k = boards_etf.get_board_kline_etf(
                         cache_dir, row["board_code"], start, end,
-                        refresh=refresh_boards)
+                        refresh=refresh_boards, offline=offline)
                     kframes.append(k.assign(board_code=row["board_code"]))
                 except Exception as exc:  # noqa: BLE001
                     kline_fail += 1
@@ -297,7 +310,8 @@ def prepare(cfg: dict, *, refresh_boards: bool = False,
     # 2) 板块指数日线（东财 push2his；失败时成分等权合成）
     if board_kline is None and board_source == "eastmoney" and boards is not None:
         try:
-            board_kline = quotes_mod.get_all_board_klines(cache_dir, boards, start, end)
+            board_kline = quotes_mod.get_all_board_klines(cache_dir, boards, start, end,
+                                                          offline=offline)
         except Exception as exc:
             print(f"[warn] 东财板块指数不可用，将用成分股等权合成：{exc}")
 

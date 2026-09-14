@@ -33,20 +33,7 @@ VOL_WINDOW = 20             # 波动闸门：20 日滚动日波动
 VOL_THRESHOLD = 0.022       # 近期翻转段日波动 2.84%、平稳期 1.1-1.8%
 
 
-def daily_ic_series(score_df: pd.DataFrame, board_close: pd.DataFrame,
-                    horizon: int = 5, min_pairs: int = 10) -> pd.Series:
-    """每日截面 IC（情绪分 vs 前瞻收益的 Spearman 相关）。"""
-    fwd = backtest.forward_returns(board_close, horizon)
-    ics = {}
-    for dt in score_df.index.intersection(fwd.index):
-        pair = pd.concat([score_df.loc[dt], fwd.loc[dt]],
-                         axis=1, keys=["s", "f"]).dropna()
-        if len(pair) < min_pairs:
-            continue
-        c = pair["s"].corr(pair["f"], method="spearman")
-        if pd.notna(c):
-            ics[dt] = c
-    return pd.Series(ics).sort_index()
+from emotion.backtest import daily_ic_series
 
 
 def ic_known_series(ic_s: pd.Series, calendar: pd.DatetimeIndex,

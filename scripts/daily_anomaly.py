@@ -23,13 +23,27 @@ sys.path.insert(0, str(ROOT))
 REPORT_DIR = ROOT / "report"
 CHUNK_DIR = ROOT / "data" / "cache" / "stock_chunks"
 
-# 东财 BK 板块映射（用于展示和聚合）
-ALL_CONS_PATH = ROOT / "data" / "cache" / "all_cons.parquet"
-
-# 尝试加载 board_names（用于展示板块中文名）
 def load_board_mapping() -> tuple[pd.DataFrame, dict[str, str]]:
-    """从 all_cons 提取 (code -> board_code) 映射和 (board_code -> board_name)。"""
-    ac = pd.read_parquet(ALL_CONS_PATH)
+    """根据 config.yaml 中的 board_source 自动提取 (code -> board_code) 映射和 (board_code -> board_name)。"""
+    from emotion.pipeline import load_config
+    cfg = load_config()
+    src = cfg.get("board_source", "etf")
+    cache_dir = ROOT / cfg.get("paths", {}).get("cache_dir", "data/cache")
+
+    candidates = {
+        "etf": cache_dir / "all_cons_etf.parquet",
+        "eastmoney": cache_dir / "all_cons.parquet",
+        "sw": cache_dir / "all_cons_sw.parquet",
+    }
+    target = candidates.get(src, cache_dir / f"all_cons_{src}.parquet")
+    if not target.exists():
+        for p in [candidates.get(src), cache_dir / "all_cons_etf.parquet", cache_dir / "all_cons.parquet"]:
+            if p and p.exists():
+                target = p
+                break
+    if not target.exists():
+        raise FileNotFoundError(f"板块成分缓存未找到：{target}，请先运行相应的抓取脚本")
+    ac = pd.read_parquet(target)
     bm = ac[["code", "board_code"]].drop_duplicates()
     board_names = dict(zip(ac["board_code"], ac["board_name"]))
     return bm, board_names

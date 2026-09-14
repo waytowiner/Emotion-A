@@ -75,21 +75,6 @@ def rotation_payload(rot: dict) -> dict:
     }
 
 
-def daily_ic_series(score_df: pd.DataFrame, board_close: pd.DataFrame,
-                    horizon: int) -> pd.Series:
-    """每日截面 Spearman IC（score vs 前瞻 horizon 日收益）。"""
-    fwd = backtest.forward_returns(board_close, horizon)
-    common = score_df.index.intersection(fwd.index)
-    ics = {}
-    for dt in common:
-        pair = pd.concat([score_df.loc[dt], fwd.loc[dt]], axis=1,
-                         keys=["s", "f"]).dropna()
-        if len(pair) < 10:
-            continue
-        ics[dt] = pair["s"].corr(pair["f"], method="spearman")
-    return pd.Series(ics).sort_index()
-
-
 def parse_switching(items: list[str], board_names: dict[str, str]) -> list[dict]:
     """把 'BK0448↓ → BK0400,BK0401↑' 解析成结构化对象。"""
     out = []
@@ -104,61 +89,6 @@ def parse_switching(items: list[str], board_names: dict[str, str]) -> list[dict]
             "to": [{"code": c, "name": board_names.get(c, c)} for c in to_codes],
         })
     return out
-
-
-def ensure_offline_fallback() -> None:
-    """探测东财行情接口；不可达时把板块 K 线降级为纯缓存读取。
-
-    pipeline 的板块 K 线默认做增量网络更新；东财 push2his 风控期间每个
-    板块会串行重试多个 host，prepare 可能挂 15 分钟以上（而缓存是完整的，
-    接口失败时本来就回退缓存）。探测不可达时直接用缓存离线计算——只改变
-    本脚本的取数路径，不改动 emotion/ 的任何计算逻辑。
-    """
-    import urllib.request
-    try:
-        req = urllib.request.Request(
-            "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-            "?secid=90.BK0448&klt=101&fqt=0&lmt=1&fields1=f1&fields2=f51",
-            headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=6):
-            return  # 接口可达，走正常增量更新
-    except Exception:
-        pass
-    from emotion.data import cache as _cache
-    from emotion.data import quotes as quotes_mod
-
-    def _cache_only(cache_dir, board_code, start, end, **kwargs):
-        cached = _cache.load(cache_dir, f"board_kline_{board_code}")
-        if cached is None or cached.empty:
-            raise RuntimeError(f"东财不可达且无缓存：{board_code}")
-        return cached
-
-    quotes_mod.get_board_kline = _cache_only
-    print("    [offline] 东财行情接口不可达，板块 K 线使用本地缓存")
-
-    # board_source=etf 口径走另一组抓取函数（中证指数，缓存键 board_kline_etf_*/
-    # board_cons_etf_*），不在上面的补丁范围内；离线时同样降级为纯缓存，
-    # 否则每个板块串行重试会把 prepare 挂住十几分钟，且抓抛异常时连缓存也不用。
-    try:
-        from emotion.data import boards_etf as _boards_etf
-
-        def _cache_only_etf_kline(cache_dir, board_code, start, end, **kwargs):
-            cached = _cache.load(cache_dir, f"board_kline_etf_{board_code}")
-            if cached is None or cached.empty:
-                raise RuntimeError(f"接口不可达且无缓存：{board_code}")
-            return cached
-
-        def _cache_only_etf_cons(cache_dir, board_code, **kwargs):
-            cached = _cache.load(cache_dir, f"board_cons_etf_{board_code}")
-            if cached is None or cached.empty:
-                raise RuntimeError(f"接口不可达且无缓存：{board_code}")
-            return cached
-
-        _boards_etf.get_board_kline_etf = _cache_only_etf_kline
-        _boards_etf.get_board_cons_etf = _cache_only_etf_cons
-        print("    [offline] ETF 板块口径同步降级：成分/指数 K 线使用本地缓存")
-    except ImportError:
-        pass
 
 
 def load_etf_info(board_names: dict) -> dict[str, list[dict] | None]:
@@ -230,8 +160,7 @@ def main() -> None:
     cfg = pipeline.load_config()
 
     print("[1/6] 准备数据（读取本地缓存）...")
-    ensure_offline_fallback()
-    data = pipeline.prepare(cfg)
+    data = pipeline.prepare(cfg, offline=True)
     board_names: dict = data["board_names"]
 
     print("[2/6] 计算情绪因子 ...")
@@ -435,7 +364,7 @@ def main() -> None:
     })
 
     # 滚动健康度序列：每日 IC 的 HEALTH_DAYS 日滚动均值
-    ic_daily = daily_ic_series(smoothed, board_close, HEALTH_HORIZON)
+    ic_daily = backtest.daily_ic_series(smoothed, board_close, HEALTH_HORIZON)
     health_roll = ic_daily.rolling(HEALTH_DAYS, min_periods=HEALTH_DAYS // 2).mean()
     hs = [{"date": d.strftime("%Y-%m-%d"), "ic": float(v)}
           for d, v in health_roll.dropna().tail(HEALTH_SERIES_DAYS).items()]
