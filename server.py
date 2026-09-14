@@ -91,6 +91,14 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="板块情绪雷达", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
+@app.middleware("http")
+async def no_cache(request, call_next):
+    """禁止浏览器启发式缓存：本地看板文件常更新，避免 HTML/JS 新旧混载。"""
+    resp = await call_next(request)
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+    return resp
+
+
 @app.get("/api/overview")
 def api_overview():
     c = require_data()
@@ -194,6 +202,8 @@ def _run_dump():
 def api_refresh():
     if _refresh_state["running"]:
         return {"started": False, "message": "正在刷新中，请稍候"}
+    if _update_state["running"]:
+        return {"started": False, "message": "数据更新进行中，请稍候"}
     threading.Thread(target=_run_dump, daemon=True).start()
     return {"started": True, "message": "已开始重新计算，约需 1-2 分钟"}
 
@@ -201,6 +211,78 @@ def api_refresh():
 @app.get("/api/refresh_status")
 def api_refresh_status():
     return _refresh_state
+
+
+# ---------------- 数据更新（联网抓取全流程） ----------------
+# 原 run.bat 启动时串行的 5 步。瓶颈已治理：板块步走中证接口增量（缓存命中
+# 零请求），个股日线走腾讯快照（单日 42 秒），baostock 仅在多日补抓时启用。
+# 已从启动流程移除，改为看板界面「更新数据」按钮触发本接口。
+
+UPDATE_STEPS = [
+    # (步骤名, 脚本, 额外参数, 超时秒)
+    ("板块成分/指数", "scripts/fetch_etf_boards.py", [], 1800),  # 中证可交易ETF池
+    ("个股日线增量", "scripts/fetch_stock_history.py", ["--update"], 3600),
+    ("情绪日报", "main.py", [], 900),
+    ("异动榜", "scripts/daily_anomaly.py", [], 900),
+    ("看板数据导出", "scripts/dump_dashboard_data.py", [], 900),
+]
+
+_update_state = {"running": False, "started_at": None, "finished_at": None,
+                 "ok": None, "step": None, "steps": [], "log_tail": ""}
+
+
+def _run_update():
+    _update_state.update(running=True, started_at=time.strftime("%H:%M:%S"),
+                         finished_at=None, ok=None, step=None, log_tail="",
+                         steps=[{"label": label, "status": "pending", "secs": None}
+                                for label, _, _, _ in UPDATE_STEPS])
+    ok = True
+    try:
+        for i, (label, script, args, timeout) in enumerate(UPDATE_STEPS):
+            _update_state["step"] = label
+            _update_state["steps"][i]["status"] = "running"
+            t0 = time.time()
+            try:
+                proc = subprocess.run([sys.executable, str(ROOT / script), *args],
+                                      cwd=str(ROOT), capture_output=True, text=True,
+                                      encoding="utf-8", errors="replace",
+                                      timeout=timeout)
+            except Exception as exc:  # noqa: BLE001
+                _update_state["steps"][i]["status"] = "fail"
+                _update_state["log_tail"] = f"[{label}] {type(exc).__name__}: {exc}"
+                ok = False
+                break
+            _update_state["steps"][i]["secs"] = round(time.time() - t0)
+            tail = (proc.stdout + proc.stderr).strip().splitlines()
+            if tail:
+                _update_state["log_tail"] = f"[{label}] " + "\n".join(tail[-8:])
+            if proc.returncode != 0:
+                _update_state["steps"][i]["status"] = "fail"
+                ok = False
+                break
+            _update_state["steps"][i]["status"] = "ok"
+        if ok:
+            load_all()
+    finally:
+        _update_state.update(running=False, ok=ok,
+                             finished_at=time.strftime("%H:%M:%S"))
+
+
+@app.post("/api/update")
+def api_update():
+    if _update_state["running"]:
+        return {"started": False, "message": "数据更新进行中，请稍候"}
+    if _refresh_state["running"]:
+        return {"started": False, "message": "正在刷新中，请稍候"}
+    threading.Thread(target=_run_update, daemon=True).start()
+    return {"started": True,
+            "message": "已开始更新数据（抓取→日报→看板）：日常增量通常 1-5 分钟"
+                       "（多日补抓或快照不可用时 20-40 分钟），期间正常显示旧数据"}
+
+
+@app.get("/api/update_status")
+def api_update_status():
+    return _update_state
 
 
 # ---------------- 静态页面 ----------------

@@ -4,10 +4,14 @@
 2) 调仓日为每周真实最后交易日：周五休市的周也要正常调仓（不静默跳周）。
 """
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from emotion.backtest import rotation_backtest
+from emotion.backtest import (apply_confirm_hysteresis, equal_weight_portfolio,
+                              ic_robustness, portfolio_turnover,
+                              quantile_spread_series, rebalance_dates,
+                              rolling_ic_validation, rotation_backtest)
 
 W1 = pd.bdate_range("2026-01-05", periods=5)  # 1/5(一) ~ 1/9(五)
 W2 = pd.bdate_range("2026-01-12", periods=5)  # 1/12(一) ~ 1/16(五)
@@ -66,3 +70,76 @@ class TestRebalanceTiming:
         # 第2周五换 A->B：tc = 0.01 * 1 / 1
         assert rot["nav"][days[9]] == pytest.approx(0.99)
         assert rot["total_cost_drag"] == pytest.approx(0.01)
+
+    def test_variable_size_turnover_is_weight_symmetric(self):
+        """Top3 ↔ 全市场等权的换手必须相同，且不可能超过 100%。"""
+        top3 = equal_weight_portfolio(["A", "B", "C"])
+        broad = equal_weight_portfolio(["A", "B", "C"] + [f"X{i}" for i in range(97)])
+        assert portfolio_turnover(top3, broad) == pytest.approx(0.97)
+        assert portfolio_turnover(broad, top3) == pytest.approx(0.97)
+
+    def test_open_last_week_is_not_a_historical_rebalance(self):
+        days = pd.bdate_range("2026-01-05", periods=7)  # 最后一周只到周二
+        dates = rebalance_dates(days, freq="W-FRI")
+        assert dates.tolist() == [pd.Timestamp("2026-01-09")]
+
+
+class TestIcRobustness:
+    def test_hac_bootstrap_and_rolling_blocks_have_expected_shape(self):
+        ic = pd.Series([0.05 + i * 0.001 for i in range(20)],
+                       index=pd.bdate_range("2026-01-05", periods=20))
+        stat = ic_robustness(ic, horizon=5, bootstrap_samples=100)
+        assert stat["IC_nonoverlap_n"] == 4
+        assert stat["IC_nonoverlap_mean"] > 0
+        assert stat["IC_bootstrap_low"] > 0
+        assert stat["IC_bootstrap_high"] >= stat["IC_bootstrap_low"]
+        blocks = rolling_ic_validation(ic, block_days=7)
+        assert blocks["n_obs"].tolist() == [7, 7, 6]
+        assert pd.isna(blocks.iloc[0]["previous_IC_mean"])
+
+
+class TestQuantileSpreadSeries:
+    """分层价差（Q5−Q1）的符号必须跟随分组排序结构：动量结构为正、反转为负。"""
+
+    def _make(self, rates: np.ndarray):
+        days = pd.bdate_range("2026-01-05", periods=10)
+        cols = [f"B{i:02d}" for i in range(20)]
+        score = pd.DataFrame(np.tile(np.arange(20.0), (10, 1)),
+                             index=days, columns=cols)
+        close = pd.DataFrame(100 * np.cumprod(1 + np.tile(rates, (10, 1)), axis=0),
+                             index=days, columns=cols)
+        return score, close
+
+    def test_spread_positive_in_momentum_structure(self):
+        # 分高的板块每天涨得更多 → Q5−Q1 > 0（最后 5 日前瞻未走完，不出序列）
+        score, close = self._make(np.linspace(-0.01, 0.01, 20))
+        sp = quantile_spread_series(score, close, horizon=5)
+        assert len(sp) == 5
+        assert (sp > 0).all()
+
+    def test_spread_negative_in_reversal_structure(self):
+        # 分高的板块每天跌得更多 → Q5−Q1 < 0
+        score, close = self._make(np.linspace(0.01, -0.01, 20))
+        sp = quantile_spread_series(score, close, horizon=5)
+        assert (sp < 0).all()
+
+
+class TestConfirmHysteresis:
+    def test_single_reading_does_not_flip(self):
+        """单次反向读数不生效：先观望，连续 2 次同向才确认。"""
+        d = pd.Series(["top", "top", "bottom", "bottom", "bottom"],
+                      index=pd.bdate_range("2026-01-05", periods=5))
+        out = apply_confirm_hysteresis(d, confirm=2)
+        assert out.tolist() == ["neutral", "top", "neutral", "bottom", "bottom"]
+
+    def test_neutral_immediate_and_resets_streak(self):
+        """观望即刻生效，且会打断方向读数的连续计数。"""
+        d = pd.Series(["top", "neutral", "top", "top"],
+                      index=pd.bdate_range("2026-01-05", periods=4))
+        out = apply_confirm_hysteresis(d, confirm=2)
+        assert out.tolist() == ["neutral", "neutral", "neutral", "top"]
+
+    def test_confirm_1_is_identity(self):
+        d = pd.Series(["top", "bottom", "neutral"],
+                      index=pd.bdate_range("2026-01-05", periods=3))
+        assert apply_confirm_hysteresis(d, confirm=1).tolist() == d.tolist()

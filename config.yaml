@@ -1,9 +1,11 @@
 # 板块情绪系统配置
 
-# 板块池：eastmoney=东财行业板块(100个，细分，回测 IC 有效，主用口径)
+# 板块池：etf=中证行业/主题指数(255个，全部有跟踪 ETF=买得到，IC 0.046 达标，主用口径)
+#         eastmoney=东财行业板块(100个，IC 有效但依赖东财接口，且部分板块无对应 ETF)
 #         ths=同花顺行业板块(90个，IC 低于 0.03 阈值，仅供观察)
+#         sw=申万二级行业(131个，IC 为负，不可用)
 #         baostock=证监会行业(兜底)
-board_source: eastmoney
+board_source: etf
 
 # 历史数据范围
 history:
@@ -15,15 +17,16 @@ history:
 # 时序分位窗口（天）：随 regime 缩短，不再用一年的老数据
 score_lookback: 120
 
-# 回测窗口：最近 N 个交易日（适应当前风格）
+# 回测窗口：多档验证（最近 N 个交易日，适应当前风格）
+# 单项 backtest_window 仍兼容；backtest_windows 存在时优先
 backtest_window: 180
+backtest_windows: [180, 120, 90, 60, 30]
 
 # 情绪分合成权重（各因子横截面 z-score 的权重，回测后可调）
 weights:
   limit_up_strength: 1.0    # 涨停强度
   money_effect: 1.0         # 赚钱效应
   breadth: 1.0              # 涨跌宽度
-  fund_flow: 1.0            # 资金流（数据不可用时自动剔除并归一化）
   rps: 1.0                  # 相对强度
   turnover_heat: 1.0        # 热度变化
   promotion_rate: 0.5       # 晋级率（题材向，权重减半）
@@ -31,19 +34,69 @@ weights:
 # 平滑窗口（周度情绪分）
 smooth_window: 5
 
+# 单因子横截面 z 的 winsorize 上限（±）：防止单一极端因子绑架综合分
+# （如 2026-08 半导体 turnover_heat z=-4.7 把板块钉到冰点）；null 表示不截断
+score_z_clip: 3.0
+
+# 交易/回测标的池：原始板块照常保留在缓存，只有满足以下条件的板块进入横截面。
+# 小于 20 只成分的细分指数很容易被个股噪声主导；完全同成分的层级板块保留较上层名称。
+# 历史仍使用当前成分快照，报告会明确这一幸存者偏差无法由该过滤消除。
+universe:
+  enabled: true
+  min_constituents: 20
+  duplicate_jaccard: 1.0  # 仅合并成分完全一致的板块；近似主题不自动合并
+
 # 信号参数
 signal:
   consecutive_days: 3        # 连续升/降温天数
   hot_quantile: 0.9          # 亢奋分位
   cold_quantile: 0.1         # 冰点分位
   top_n: 3                   # 轮动回测持仓板块数
+  # P0→P1 突变穿透规则（信号层独立判定，不进合成情绪分、不经平滑）
+  breakthrough:
+    enabled: true
+    flow_proxy_z_threshold: 2.0  # 规则1：冰点 + 成交额价格代理 z > 阈值（非真实资金流）
+    extreme_sigma: 2.0           # 规则2缺省 σ
+    extreme_hot_sigma: 2.0       # 规则2热端：亢奋 + 单因子 |z| > σ → 顺势加速度
+    extreme_cold_sigma: 2.0      # 规则2冷端：冰点 + 单因子 |z| > σ → 极端冷区异动
+    flow_positive_days: 3        # 规则3：代理连续 N 日为正 + 情绪分为负（2→3 收紧，减少噪声）
+
+# 风格判定（regime 自适应）：滚动已实现 IC 判方向，回撤护栏强制观望
+# 参数为当前预注册运行配置；P0 已修正变权换手成本、P1 已治理标的池，旧报告中的
+# 年化/夏普不可横向沿用。运行 scripts/validate_robustness.py 持续验证，不以网格最优值改参数。
+regime:
+  ic_window: 15          # 滚动 IC 窗口（交易日）——短窗口反应快，回测最优
+  threshold: 0.02        # 方向判定阈值（|IC| 超过才给方向）
+  horizon: 5             # IC 前瞻窗口（与回测一致）
+  min_obs: 10            # 窗口内最少 IC 样本数
+  guard_days: 10         # 回撤护栏：市场等权近 N 日累计收益
+  guard_threshold: -0.03 # 低于该值强制观望（翻转期避险）
+  vol_window: 20         # 波动闸门窗口（默认关闭）
+  vol_threshold: null    # 启用则设 0.022
+  require_robust_signal: true  # Bootstrap 95% CI 未完全同侧时不做方向性轮动
+  robust_ic_window: 60          # 稳健性闸门使用的已实现 IC 窗口
+  robust_bootstrap_samples: 500
+  # 单调性破坏预警（2026-08-27 预注册）：方向期间分层价差 Q5−Q1 连续 N 个可知日
+  # 反向（追涨期高分组跑输低分组）→ 提前降级观望，比 15 日 IC 均值翻负约早一周。
+  # 只降级、不提前给方向；null 关闭。
+  mono_days: 3
+  # 方向确认迟滞（2026-08-27 研究网格验证后预注册：夏普 0.58→0.60、
+  # 2026-07 以来 -5.8%→-3.6%、回撤 -30.5%→-29.6%；c3 无进一步收益）：
+  # 轮动层非观望方向需连续 N 次调仓判定同向才生效，未确认期间观望；
+  # 波动/回撤闸门不受迟滞影响，始终即时生效。仅用于轮动回测层，日报判定为单日读数。
+  confirm_readings: 2
+
+# P2 稳健性监控：仅用于验证与预警，不参与参数搜索。
+evaluation:
+  bootstrap_samples: 1000
+  rolling_block_days: 20
 
 # 回测参数
 backtest:
   forward_days: [5, 10, 20]  # IC 前瞻收益窗口
   rebalance: "W"             # 轮动调仓频率：周
-  cost_bps: 5                # 往返换仓成本（万分之）：每次换仓按持仓权重扣一次
-  benchmark: "等权全板块"
+  cost_bps: 5                # 单边 100% 换手成本（万分之），按组合权重 L1/2 计算
+  benchmark: "板块等权参考（非可交易基准）"
 
 # 网络
 network:

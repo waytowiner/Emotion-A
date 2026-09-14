@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -9,6 +10,8 @@ import yaml
 
 from .data import boards as boards_mod
 from .data import quotes as quotes_mod
+from .factors import FACTOR_NAMES
+from .universe import select_board_universe
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -16,24 +19,82 @@ ROOT = Path(__file__).resolve().parents[1]
 def load_config(path: str | Path | None = None) -> dict:
     p = Path(path) if path else ROOT / "config.yaml"
     with open(p, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    validate_config(cfg, path=p)
+    return cfg
+
+
+def validate_config(cfg: dict, *, path: Path | None = None) -> None:
+    """对会静默改变研究结论的配置错误快速失败。
+
+    过去 ``weights.fund_flow`` 没有对应因子时会被合成层悄悄忽略；这类问题
+    会让配置、报告和实际计算各说各话。这里仅校验影响核心口径的字段，仍允许
+    用户在配置中加入自己的说明性字段。
+    """
+    if not isinstance(cfg, dict):
+        raise ValueError(f"配置必须是 YAML 对象：{path or 'config.yaml'}")
+    weights = cfg.get("weights")
+    if not isinstance(weights, dict) or not weights:
+        raise ValueError("weights 必须是非空映射")
+    unknown_weights = sorted(set(weights) - set(FACTOR_NAMES))
+    if unknown_weights:
+        raise ValueError(
+            f"weights 包含未实现的因子 {unknown_weights}；可用因子：{list(FACTOR_NAMES)}")
+    if not any(float(v) > 0 for v in weights.values()):
+        raise ValueError("weights 至少需要一个正权重")
+    uni = cfg.get("universe", {})
+    if not isinstance(uni, dict):
+        raise ValueError("universe 必须是映射")
+    if int(uni.get("min_constituents", 1)) < 1:
+        raise ValueError("universe.min_constituents 必须 >= 1")
+    threshold = float(uni.get("duplicate_jaccard", 1.0))
+    if not 0 < threshold <= 1:
+        raise ValueError("universe.duplicate_jaccard 必须在 (0, 1] 内")
+    signal_cfg = cfg.get("signal", {})
+    if not isinstance(signal_cfg, dict):
+        raise ValueError("signal 必须是映射")
+    for key in ("hot_quantile", "cold_quantile"):
+        if key in signal_cfg and not 0 < float(signal_cfg[key]) < 1:
+            raise ValueError(f"signal.{key} 必须在 (0, 1) 内")
 
 
 def cache_end_date(cfg: dict) -> str:
-    """板块K线缓存的最新交易日。用于避免增量网络抓取（传输层可能进程级崩溃）。"""
+    """数据可用的最新完整交易日：板块K线与个股日线缓存截止日的较小者。
+
+    用于避免增量网络抓取（传输层可能进程级崩溃），也防止单一源的超前行
+    （如中证接口凌晨预发的次日占位行）导致报告日期虚标。
+    """
     cache_dir = ROOT / cfg["paths"]["cache_dir"]
-    files = sorted(Path(cache_dir).glob("board_kline_*.parquet"))
-    last = None
-    for f in files:
+    src = cfg.get("board_source", "eastmoney")
+    pattern = {"eastmoney": "board_kline_BK*", "ths": "board_kline_ths_*",
+               "sw": "board_kline_sw_*", "etf": "board_kline_etf_*",
+               }.get(src, "board_kline_*") + ".parquet"
+    lasts = []
+    for f in sorted(Path(cache_dir).glob(pattern)):
         try:
-            d = pd.read_parquet(f)["date"].max()
-            if last is None or d > last:
-                last = d
+            d = pd.read_parquet(f, columns=["date"])["date"]
+            if not d.empty:
+                lasts.append(pd.to_datetime(d).max())
         except Exception:  # noqa: BLE001
             continue
-    if last is None:
+    # 板块池取"最新"（任一板块抓到即算），再与个股日线截止日取小
+    board_last = max(lasts) if lasts else None
+    stock_last = None
+    for f in sorted(Path(cache_dir).glob("stock_chunks/chunk_*.parquet")):
+        try:
+            d = pd.read_parquet(f, columns=["date"])["date"]
+            if not d.empty:
+                mx = pd.to_datetime(d).max()
+                if stock_last is None or mx > stock_last:
+                    stock_last = mx
+        except Exception:  # noqa: BLE001
+            continue
+    end = board_last
+    if end is None or (stock_last is not None and stock_last < end):
+        end = stock_last
+    if end is None:
         return pd.Timestamp.today().strftime("%Y-%m-%d")
-    return last.strftime("%Y-%m-%d")
+    return end.strftime("%Y-%m-%d")
 
 
 def load_stock_chunks(cache_dir: str | Path) -> pd.DataFrame:
@@ -67,8 +128,11 @@ def _exclude_star(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
 
 def build_board_kline_from_stocks(stock_daily: pd.DataFrame,
                                   board_map: pd.DataFrame) -> pd.DataFrame:
-    """降级：东财板块指数不可用时，用成分股等权日收益合成板块指数。"""
-    m = board_map[["code", "board_code"]].drop_duplicates("code")
+    """降级：东财板块指数不可用时，用成分股等权日收益合成板块指数。
+
+    一股多板：只按 (code, board_code) 对去重，一只股票可计入其所属的全部板块。
+    """
+    m = board_map[["code", "board_code"]].drop_duplicates()
     d = stock_daily.merge(m, on="code", how="inner")
     g = d.groupby(["board_code", "date"]).agg(
         pct_chg=("pct_chg", "mean"), amount=("amount", "sum")).reset_index()
@@ -135,10 +199,99 @@ def prepare(cfg: dict, *, refresh_boards: bool = False,
                                                 refresh=refresh_boards)
         except Exception as exc:
             print(f"[warn] 东财板块不可用，降级 baostock 行业分类：{exc}")
+    if board_map is None and board_source == "sw":
+        # 申万二级行业（131 个，全市场完整分区，经 akshare）
+        try:
+            from .data import boards_sw
+            boards = boards_sw.get_board_list_sw(cache_dir, refresh=refresh_boards)
+            frames, cons_fail = [], 0
+            for _, row in boards.iterrows():
+                try:
+                    cons = boards_sw.get_board_cons_sw(
+                        cache_dir, row["board_code"], refresh=refresh_boards)
+                    frames.append(cons.assign(board_code=row["board_code"],
+                                              board_name=row["board_name"]))
+                except Exception as exc:  # noqa: BLE001
+                    cons_fail += 1
+                    if cons_fail <= 3:
+                        print(f"[warn] 申万成分缺失 {row['board_name']}: {str(exc)[:60]}")
+            if frames:
+                board_map = pd.concat(frames, ignore_index=True)
+            if cons_fail:
+                print(f"[warn] 申万成分：{cons_fail}/{len(boards)} 个板块失败")
+            kframes, kline_fail = [], 0
+            for _, row in boards.iterrows():
+                try:
+                    k = boards_sw.get_board_kline_sw(
+                        cache_dir, row["board_code"], start, end,
+                        refresh=refresh_boards)
+                    kframes.append(k.assign(board_code=row["board_code"]))
+                except Exception as exc:  # noqa: BLE001
+                    kline_fail += 1
+                    if kline_fail <= 3:
+                        print(f"[warn] 申万K线缺失 {row['board_name']}: {str(exc)[:60]}")
+            if kframes:
+                board_kline = pd.concat(kframes, ignore_index=True)
+            if kline_fail:
+                print(f"[warn] 申万 K线：{kline_fail}/{len(boards)} 个板块失败")
+        except Exception as exc:
+            print(f"[warn] 申万板块不可用，降级处理：{exc}")
+    if board_map is None and board_source == "etf":
+        # 可交易 ETF 板块池（中证行业/主题指数，全部有跟踪产品=买得到）
+        try:
+            from .data import boards_etf
+            boards = boards_etf.get_board_list_etf(cache_dir, refresh=refresh_boards)
+            frames, cons_fail = [], 0
+            for _, row in boards.iterrows():
+                try:
+                    cons = boards_etf.get_board_cons_etf(
+                        cache_dir, row["board_code"], refresh=refresh_boards)
+                    frames.append(cons.assign(board_code=row["board_code"],
+                                              board_name=row["board_name"]))
+                except Exception as exc:  # noqa: BLE001
+                    cons_fail += 1
+                    if cons_fail <= 3:
+                        print(f"[warn] ETF板块成分缺失 {row['board_name']}: {str(exc)[:60]}")
+            if frames:
+                board_map = pd.concat(frames, ignore_index=True)
+            if cons_fail:
+                print(f"[warn] ETF板块成分：{cons_fail}/{len(boards)} 个失败")
+            kframes, kline_fail = [], 0
+            for _, row in boards.iterrows():
+                try:
+                    k = boards_etf.get_board_kline_etf(
+                        cache_dir, row["board_code"], start, end,
+                        refresh=refresh_boards)
+                    kframes.append(k.assign(board_code=row["board_code"]))
+                except Exception as exc:  # noqa: BLE001
+                    kline_fail += 1
+                    if kline_fail <= 3:
+                        print(f"[warn] ETF板块K线缺失 {row['board_name']}: {str(exc)[:60]}")
+            if kframes:
+                board_kline = pd.concat(kframes, ignore_index=True)
+            if kline_fail:
+                print(f"[warn] ETF板块 K线：{kline_fail}/{len(boards)} 个失败")
+        except Exception as exc:
+            print(f"[warn] ETF板块池不可用，降级处理：{exc}")
     if board_map is None:
         board_map = boards_mod.get_board_map_baostock(cache_dir)
         boards = board_map[["board_code", "board_name"]].drop_duplicates()
 
+    # 1.5) 标的池治理：先按当前成分快照筛掉极小板块、再去掉完全重复暴露。
+    # 这只影响打分/回测用的集合；原始数量及剔除明细随结果一起输出，便于审计。
+    uni_cfg = cfg.get("universe", {})
+    board_map, boards, universe = select_board_universe(
+        board_map, boards,
+        enabled=bool(uni_cfg.get("enabled", True)),
+        min_constituents=int(uni_cfg.get("min_constituents", 1)),
+        duplicate_jaccard=float(uni_cfg.get("duplicate_jaccard", 1.0)),
+    )
+    universe["board_source"] = board_source
+    if board_source == "eastmoney":
+        cons_path = cache_dir / "all_cons.parquet"
+        if cons_path.exists():
+            universe["constituent_snapshot_at"] = datetime.fromtimestamp(
+                cons_path.stat().st_mtime).strftime("%Y-%m-%d")
     board_names = dict(zip(boards["board_code"], boards["board_name"]))
 
     # 2) 板块指数日线（东财 push2his；失败时成分等权合成）
@@ -166,7 +319,11 @@ def prepare(cfg: dict, *, refresh_boards: bool = False,
 
     if board_kline is None:
         board_kline = build_board_kline_from_stocks(stock_daily, board_map)
+    # 双向截断：缓存可能含 end 之后的行（如中证接口提前发布的次日凌晨占位行）
+    end_ts = pd.Timestamp(end)
     board_kline = board_kline[pd.to_datetime(board_kline["date"]) >= start_ts]
+    board_kline = board_kline[pd.to_datetime(board_kline["date"]) <= end_ts]
+    board_kline = board_kline[board_kline["board_code"].isin(board_names)]
 
     return {
         "stock_daily": stock_daily,
@@ -175,4 +332,5 @@ def prepare(cfg: dict, *, refresh_boards: bool = False,
         "boards": boards,
         "board_names": board_names,
         "market_total": market_total,
+        "universe": universe,
     }

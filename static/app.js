@@ -5,6 +5,14 @@ const UP = '#ea3943', DOWN = '#0ecb81', ACCENT = '#58a6ff', GOLD = '#f0b90b', PU
 const UP_SOFT = '#ff6b74', DOWN_SOFT = '#4fe3a5';
 const $ = s => document.querySelector(s);
 
+/* 帮助按钮：点击 ? 展开/收起大白话讲解面板 */
+document.addEventListener('click', e => {
+  const btn = e.target.closest('.help-btn');
+  if (!btn) return;
+  const panel = document.getElementById(btn.dataset.help);
+  if (panel) panel.classList.toggle('open');
+});
+
 /* ---------------- 工具 ---------------- */
 function toast(msg, ok = false) {
   const el = document.createElement('div');
@@ -92,8 +100,27 @@ function skeleton(target, h = 240) {
 
 /* ---------------- 图表管理 ---------------- */
 const charts = {};
+function disposeAllCharts() {
+  Object.values(charts).forEach(c => { try { c.dispose(); } catch (e) { /* ignore */ } });
+  Object.keys(charts).forEach(k => delete charts[k]);
+}
 function getChart(id) {
-  if (!charts[id]) charts[id] = echarts.init($('#' + id), null, { renderer: 'canvas' });
+  const el = $('#' + id);
+  if (!el) return null;
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) {
+    // 容器尚未参与布局，强制一次重排重绘后再初始化
+    el.style.display = 'none';
+    void el.offsetHeight;
+    el.style.display = '';
+  }
+  if (!charts[id]) {
+    charts[id] = echarts.init(el, null, { renderer: 'canvas' });
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => { if (charts[id]) charts[id].resize(); });
+      ro.observe(el);
+    }
+  }
   return charts[id];
 }
 window.addEventListener('resize', () => Object.values(charts).forEach(c => c.resize()));
@@ -110,11 +137,15 @@ const TOOLTIP_STYLE = {
 
 /* ---------------- 业务字典 ---------------- */
 const SIG_META = {
-  heating:   { title: '升温榜',  cls: 'sig-heating', desc: '情绪分连续 3 天上升，资金正在进场' },
-  cooling:   { title: '降温榜',  cls: 'sig-cooling', desc: '情绪分连续 3 天下降，资金正在撤退' },
+  heating:   { title: '升温榜',  cls: 'sig-heating', desc: '情绪分连续 3 天上升，趋势正在抬升' },
+  cooling:   { title: '降温榜',  cls: 'sig-cooling', desc: '情绪分连续 3 天下降，趋势正在降温' },
   hot:       { title: '亢奋区',  cls: 'sig-hot',     desc: '情绪处于自身历史 90% 以上，不宜追高' },
   cold:      { title: '冰点区',  cls: 'sig-cold',    desc: '情绪处于自身历史 10% 以下，留意反转机会' },
   switching: { title: '切换预警', cls: 'sig-switch',  desc: '前期领涨板块降温、低位板块升温，热点可能正在切换' },
+  bottom_reversal: { title: '底部反转预警', cls: 'sig-cold', desc: '冰点且成交额价格代理异常，仅作候选观察' },
+  extreme_hot: { title: '顺势加速度', cls: 'sig-hot', desc: '亢奋且单因子极端，动量市的辅助信号' },
+  extreme_cold: { title: '极端冷区异动', cls: 'sig-cold', desc: '冰点且单因子极端，需结合风格判断' },
+  fund_emotion_divergence: { title: '代理-情绪背离', cls: 'sig-switch', desc: '成交额×涨跌幅连续为正，不是真实资金净流入' },
 };
 const BADGE_NAME = { heating: '升温', cooling: '降温', hot: '亢奋', cold: '冰点', switching_from: '切换' };
 
@@ -133,6 +164,9 @@ const state = {
   overview: null, backtest: null, health: null,
   boards: {},          // code -> board detail
   currentBoard: null,
+  btWindow: null,      // 回测页当前选中的窗口（交易日数）
+  btFreq: 'W',         // 回测页调仓频率：W=每周，D=每日
+  btTopN: null,        // 回测页持仓数量（买榜单前 N 名）
   rankSort: { key: 'score', dir: -1 },
   loaded: { today: false, backtest: false },
 };
@@ -165,8 +199,29 @@ function renderHealthLamp() {
   }
   dot.className = 'lamp-dot ' + level;
   txt.textContent = text;
-  $('#lamp-sub').textContent =
-    `最近60天胜率 ${fmtPct(h.ic_win_rate)} · IC ${h.ic_mean == null ? '--' : h.ic_mean.toFixed(3)}`;
+  let sub = `最近60天胜率 ${fmtPct(h.ic_win_rate)} · IC ${h.ic_mean == null ? '--' : h.ic_mean.toFixed(3)}`;
+  // 分层价差 Q5−Q1：区分"信号反"（<0，单调倒置）与"信号死"（≈0，无结构）
+  if (h.spread_mean != null && isFinite(h.spread_mean)) {
+    sub += ` · 价差Q5-Q1 ${(h.spread_mean * 100).toFixed(2)}%` +
+           (h.spread_mean < 0 ? '（倒置：信号反）' : '');
+  }
+  // 风格判定（regime 自适应）：方向建议 + 风控闸门
+  const rg = state.overview.latest.regime;
+  if (rg) {
+    const dirMeta = {
+      top: '风格判定：动量市 → 榜单顺势使用',
+      bottom: '风格判定：反转市 → 榜单反向使用（Top=回避，Bottom=关注）',
+      neutral: '风格判定：观望 → 不做方向性轮动',
+    };
+    const gates = [];
+    if (rg.guard_hit) gates.push('回撤护栏');
+    if (rg.vol_gate) gates.push('波动闸门');
+    if (rg.robust_gate) gates.push('IC稳健性');
+    if (rg.mono_gate) gates.push('单调性破坏');
+    const gateTxt = gates.length ? `（${gates.join('+')}触发）` : '';
+    sub += ` · ${dirMeta[rg.direction] || dirMeta.neutral}${gateTxt}`;
+  }
+  $('#lamp-sub').textContent = sub;
 }
 
 function renderSignalCards() {
@@ -293,8 +348,12 @@ function renderRankTable() {
 async function loadToday() {
   if (!state.overview) state.overview = await api('/api/overview');
   const meta = state.overview.meta;
+  const uni = meta.universe || state.overview.latest.universe;
+  const universeText = uni && uni.raw_board_count != null
+    ? `入选 ${uni.eligible_board_count}/${uni.raw_board_count} 个板块`
+    : `共 ${meta.n_boards} 个板块`;
   $('#data-date').textContent =
-    `数据日期：${state.overview.latest.date}（共 ${meta.n_boards} 个板块，更新于 ${meta.generated_at}）`;
+    `数据日期：${state.overview.latest.date}（${universeText}，更新于 ${meta.generated_at}）`;
   renderHealthLamp();
   renderSignalCards();
   renderDiverge();
@@ -303,21 +362,67 @@ async function loadToday() {
 }
 
 /* ---------------- Tab2 回测验证 ---------------- */
+const FREQ_LABEL = { W: '每周', D: '每日' };
+
+function curBt() {
+  return state.backtest.windows[String(state.btWindow)];
+}
+function curRot() {
+  return curBt().rotation[state.btFreq][String(state.btTopN)];
+}
+
+function renderBtWindowBar() {
+  const bar = $('#bt-window-bar');
+  const btn = (val, active, group, label) =>
+    `<button class="bt-window-btn${active ? ' active' : ''}" data-g="${group}" data-v="${val}">${label}</button>`;
+  bar.innerHTML = '<span class="bt-window-label">回测区间</span>' +
+    state.backtest.window_list.map(w => btn(w, w === state.btWindow, 'w', w + ' 天')).join('') +
+    '<span class="bt-window-label" style="margin-left:16px">调仓频率</span>' +
+    Object.keys(FREQ_LABEL).map(f => btn(f, f === state.btFreq, 'f', FREQ_LABEL[f])).join('') +
+    '<span class="bt-window-label" style="margin-left:16px">持仓数量</span>' +
+    curBt().top_n_list.map(n => btn(n, n === state.btTopN, 'n', '前 ' + n + ' 名')).join('');
+  bar.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.g === 'w') {
+      const w = +b.dataset.v;
+      if (w === state.btWindow) return;
+      state.btWindow = w;
+      renderBtWindowBar();
+      renderBtHero(); renderIcChart(); renderQuantChart(); renderNavChart(); renderPerfTable(); renderIcTable();
+    } else if (b.dataset.g === 'f') {
+      if (b.dataset.v === state.btFreq) return;
+      state.btFreq = b.dataset.v;
+      renderBtWindowBar();
+      renderBtHero(); renderNavChart(); renderPerfTable();
+    } else {
+      const n = +b.dataset.v;
+      if (n === state.btTopN) return;
+      state.btTopN = n;
+      renderBtWindowBar();
+      renderBtHero(); renderNavChart(); renderPerfTable();
+    }
+  }));
+}
+
 function renderBtHero() {
-  const bt = state.backtest;
-  const t = bt.rotation.top;
+  const bt = curBt();
+  const t = curRot().top;
+  const stratMetric = t.strategy.annualized_reliable ? t.strategy.annual_ret : t.strategy.total_ret;
+  const benchMetric = t.benchmark.annualized_reliable ? t.benchmark.annual_ret : t.benchmark.total_ret;
+  const metricLabel = t.strategy.annualized_reliable ? '年化' : '累计收益（样本不足半年）';
   $('#bt-hero').innerHTML =
-    `最近 <b>${bt.window}</b> 个交易日：每周跟着榜单前 ${bt.top_n} 名板块<b>对应的 ETF</b> 买，年化
-     <b class="${cls(t.strategy.annual_ret)}" id="hero-strat">--</b>，
-     同期大盘（等权全板块）只有
-     <b class="${cls(t.benchmark.annual_ret)}" id="hero-bench">--</b>。
-     <span style="color:var(--text-faint);font-size:13px">（${bt.start} ~ ${bt.end}，回测用板块指数近似代替 ETF；历史表现，不代表未来）</span>`;
-  countUp($('#hero-strat'), t.strategy.annual_ret, v => fmtPctSign(v), 1000);
-  countUp($('#hero-bench'), t.benchmark.annual_ret, v => fmtPctSign(v), 1000);
+    `最近 <b>${bt.window}</b> 个交易日，<b>${FREQ_LABEL[state.btFreq]}</b>调仓：买榜单前 <b>${state.btTopN}</b> 名板块，${metricLabel}
+     <b class="${cls(stratMetric)}" id="hero-strat">--</b>，
+     板块等权参考为
+     <b class="${cls(benchMetric)}" id="hero-bench">--</b>。
+     <span style="color:var(--text-faint);font-size:13px">（${bt.start} ~ ${bt.end}；板块指数不是 ETF 实盘回测）</span>`;
+  countUp($('#hero-strat'), stratMetric, v => fmtPctSign(v), 1000);
+  countUp($('#hero-bench'), benchMetric, v => fmtPctSign(v), 1000);
 }
 
 function renderIcChart() {
-  const s = state.health.series;
+  // 联动回测窗口：只显示选中区间内的滚动 IC（口径不变，仍是滚动 60 日均值）
+  const bt = curBt();
+  const s = state.health.series.filter(x => x.date >= bt.start && x.date <= bt.end);
   const chart = getChart('chart-ic');
   chart.setOption({
     grid: { left: 50, right: 20, top: 20, bottom: 28 },
@@ -327,7 +432,8 @@ function renderIcChart() {
     yAxis: { type: 'value', ...AXIS_STYLE, axisLabel: { color: '#8b949e', formatter: v => v.toFixed(2) } },
     visualMap: {
       show: false, seriesIndex: 0, dimension: 1,
-      pieces: [{ gte: 0, color: UP }, { lt: 0, color: DOWN }],
+      // 注意：piece 必须是闭合区间，单边 {gte:0} 会触发 echarts getVisualGradient 崩溃
+      pieces: [{ gte: 0, lte: 1, color: UP }, { gte: -1, lt: 0, color: DOWN }],
     },
     series: [{
       type: 'line', data: s.map(x => +x.ic.toFixed(4)), showSymbol: false, lineStyle: { width: 1.6 },
@@ -343,7 +449,7 @@ function renderIcChart() {
 }
 
 function renderQuantChart() {
-  const q = state.backtest.quantile;
+  const q = curBt().quantile;
   const chart = getChart('chart-quant');
   chart.setOption({
     grid: { left: 56, right: 20, top: 20, bottom: 40 },
@@ -367,23 +473,31 @@ function renderQuantChart() {
 }
 
 const ROT_META = [
-  ['top', '追涨：每周买前 N 名', UP],
-  ['bottom', '抄底：每周买后 N 名', DOWN],
-  ['avoid_top', '回避亢奋：买其余全部', GOLD],
+  ['top', () => `追涨：${FREQ_LABEL[state.btFreq]}买前 ${state.btTopN} 名`, UP],
+  ['bottom', () => `抄底：${FREQ_LABEL[state.btFreq]}买后 ${state.btTopN} 名`, DOWN],
+  ['avoid_top', () => `回避亢奋：买除前 ${state.btTopN} 名外全部`, GOLD],
 ];
 function renderNavChart() {
-  const rot = state.backtest.rotation;
+  const rot = curRot();
   const dates = rot.top.nav.map(x => x.date);
   const toMap = arr => Object.fromEntries(arr.map(x => [x.date, x.nav]));
-  const series = ROT_META.map(([key, name, color]) => ({
-    name, type: 'line', showSymbol: false, lineStyle: { width: 1.8, color },
+  const series = ROT_META.map(([key, nameFn, color]) => ({
+    name: nameFn(), type: 'line', showSymbol: false, lineStyle: { width: 1.8, color },
     itemStyle: { color }, data: dates.map(d => { const v = toMap(rot[key].nav)[d]; return v == null ? null : +v.toFixed(4); }),
   }));
   series.push({
-    name: '基准：等权全板块', type: 'line', showSymbol: false,
+    name: '参考：板块等权（非可交易）', type: 'line', showSymbol: false,
     lineStyle: { width: 1.4, color: '#8b949e', type: 'dashed' }, itemStyle: { color: '#8b949e' },
-    data: dates.map(d => { const v = toMap(rot.top.benchmark_nav)[d]; return v == null ? null : +v.toFixed(4); }),
+    data: dates.map(d => { const v = toMap(curBt().benchmark_nav)[d]; return v == null ? null : +v.toFixed(4); }),
   });
+  const idx = curBt().index300_nav;
+  if (idx && idx.length) {
+    series.push({
+      name: '沪深300', type: 'line', showSymbol: false,
+      lineStyle: { width: 1.4, color: ACCENT, type: 'dashed' }, itemStyle: { color: ACCENT },
+      data: dates.map(d => { const v = toMap(idx)[d]; return v == null ? null : +v.toFixed(4); }),
+    });
+  }
   const chart = getChart('chart-nav');
   chart.setOption({
     grid: { left: 50, right: 20, top: 40, bottom: 28 },
@@ -396,12 +510,13 @@ function renderNavChart() {
 }
 
 function renderPerfTable() {
-  const rot = state.backtest.rotation;
-  const rows = ROT_META.map(([key, name]) => {
+  const rot = curRot();
+  const rows = ROT_META.map(([key, nameFn]) => {
     const r = rot[key];
     return `<tr>
-      <td class="l">${name}</td>
-      <td class="${cls(r.strategy.annual_ret)}">${fmtPctSign(r.strategy.annual_ret)}</td>
+      <td class="l">${nameFn()}</td>
+      <td class="${cls(r.strategy.total_ret)}">${fmtPctSign(r.strategy.total_ret)}</td>
+      <td class="${cls(r.strategy.annual_ret)}">${r.strategy.annualized_reliable ? fmtPctSign(r.strategy.annual_ret) : '—'}</td>
       <td>${r.strategy.sharpe == null ? '--' : r.strategy.sharpe.toFixed(2)}</td>
       <td class="num-down">${fmtPct(r.strategy.max_dd, 1)}</td>
       <td>${r.final_nav == null ? '--' : r.final_nav.toFixed(3)}</td>
@@ -410,8 +525,9 @@ function renderPerfTable() {
   });
   const b = rot.top;
   rows.push(`<tr style="color:var(--text-dim)">
-    <td class="l">基准：等权全板块</td>
-    <td class="${cls(b.benchmark.annual_ret)}">${fmtPctSign(b.benchmark.annual_ret)}</td>
+    <td class="l">参考：板块等权（非可交易）</td>
+    <td class="${cls(b.benchmark.total_ret)}">${fmtPctSign(b.benchmark.total_ret)}</td>
+    <td class="${cls(b.benchmark.annual_ret)}">${b.benchmark.annualized_reliable ? fmtPctSign(b.benchmark.annual_ret) : '—'}</td>
     <td>${b.benchmark.sharpe == null ? '--' : b.benchmark.sharpe.toFixed(2)}</td>
     <td class="num-down">${fmtPct(b.benchmark.max_dd, 1)}</td>
     <td>${b.final_benchmark == null ? '--' : b.final_benchmark.toFixed(3)}</td>
@@ -420,25 +536,51 @@ function renderPerfTable() {
 }
 
 function renderIcTable() {
-  const ic = state.backtest.ic;
+  const ic = curBt().ic;
   $('#ic-table tbody').innerHTML = ic.map(r => `<tr>
     <td class="l">${r.horizon} 日</td>
     <td class="${cls(r.IC_mean)}">${r.IC_mean == null ? '--' : r.IC_mean.toFixed(4)}</td>
     <td>${r.IR == null ? '--' : r.IR.toFixed(3)}</td>
+    <td>${r.IC_HAC_t == null ? '--' : r.IC_HAC_t.toFixed(2)}</td>
+    <td>${r.IC_bootstrap_low == null ? '--' : `[${r.IC_bootstrap_low.toFixed(3)}, ${r.IC_bootstrap_high.toFixed(3)}]`}</td>
     <td>${fmtPct(r.IC_win_rate)}</td>
-    <td>${fmtNum(r.n_obs)}</td></tr>`).join('');
+    <td>${fmtNum(r.n_obs)} / ${fmtNum(r.IC_nonoverlap_n)}</td></tr>`).join('');
   const h5 = ic.find(r => r.horizon === 5) || ic[0];
-  const verdict = h5.IC_mean >= 0.03 ? '打分有区分度，可以参考'
-    : h5.IC_mean >= 0 ? '区分度偏弱，谨慎参考' : '打分近期没有区分度';
+  const robustPositive = h5.IC_bootstrap_low != null && h5.IC_bootstrap_low > 0;
+  const verdict = robustPositive && h5.IC_mean >= 0.03 ? '校正后仍为正，可继续观察'
+    : h5.IC_mean >= 0 ? '区分度偏弱或尚未通过稳健性校正' : '打分近期没有区分度';
   $('#ic-note').innerHTML =
-    `💡 IC 是“打分”和“未来收益”的相关性，<b>&gt; 0.03 才算有用</b>。` +
+    `💡 IC 是“打分”和“未来收益”的相关性；前瞻收益重叠，不能只看朴素 IR。` +
     `本窗口 ${h5.horizon} 日 IC = <b class="${cls(h5.IC_mean)}">${h5.IC_mean.toFixed(3)}</b>，` +
+    `HAC t ${h5.IC_HAC_t == null ? '--' : h5.IC_HAC_t.toFixed(2)}，` +
     `胜率 ${fmtPct(h5.IC_win_rate)} —— ${verdict}。`;
 }
 
 async function loadBacktest() {
   if (!state.backtest) state.backtest = await api('/api/backtest');
-  if (!state.health) state.health = await api('/api/health_series?days=120');
+  if (!state.health) state.health = await api('/api/health_series?days=240');
+  // 兼容旧格式 backtest.json（无多窗口字段）：包装成单窗口结构
+  if (!state.backtest.windows) {
+    const w = state.backtest.window;
+    state.backtest.window_list = [w];
+    state.backtest.windows = { [String(w)]: state.backtest };
+  }
+  // 兼容旧格式（rotation 未按频率/持仓数分层）：视为仅有周频 + 默认 N
+  for (const k of Object.keys(state.backtest.windows)) {
+    const p = state.backtest.windows[k];
+    if (!p.rotation.W) {
+      p.benchmark_nav = p.benchmark_nav || p.rotation.top.benchmark_nav;
+      p.rotation = { W: { [String(p.top_n)]: p.rotation } };
+      p.top_n_list = [p.top_n];
+    }
+  }
+  if (!state.backtest.window_list.includes(state.btWindow)) {
+    state.btWindow = state.backtest.window_list[0];
+  }
+  if (!curBt().top_n_list.includes(state.btTopN)) {
+    state.btTopN = curBt().top_n;
+  }
+  renderBtWindowBar();
   renderBtHero();
   renderIcChart();
   renderQuantChart();
@@ -593,6 +735,10 @@ async function switchTab(name) {
     if (name === 'today' && !state.loaded.today) await loadToday();
     if (name === 'backtest' && !state.loaded.backtest) {
       skeleton('#chart-ic', 300); skeleton('#chart-quant', 300); skeleton('#chart-nav', 420);
+      $('#bt-hero').innerHTML = '<div class="skeleton sk-block" style="height:120px"></div>';
+      $('#ic-table tbody').innerHTML = '<tr><td colspan="7"><div class="skeleton sk-line" style="width:100%"></div></td></tr>';
+      $('#perf-table tbody').innerHTML = '<tr><td colspan="6"><div class="skeleton sk-line" style="width:100%"></div></td></tr>';
+      $('#ic-note').innerHTML = '';
       await loadBacktest();
     }
     if (name === 'board') {
@@ -601,8 +747,9 @@ async function switchTab(name) {
       if (!state.currentBoard) await loadBoard(state.overview.latest.top[0].code);
       else await loadBoard(state.currentBoard);
     }
-    // tab 显示后触发 resize，避免图表宽度为 0
+    // tab 显示后触发 resize，避免图表宽度为 0（requestAnimationFrame + 延时兜底）
     requestAnimationFrame(() => Object.values(charts).forEach(c => c.resize()));
+    setTimeout(() => Object.values(charts).forEach(c => c.resize()), 200);
   } catch (e) { /* toast 已提示 */ }
 }
 document.querySelectorAll('.tab').forEach(t =>
@@ -629,6 +776,7 @@ async function refreshData() {
           if (st.ok) {
             $('#refresh-msg').textContent = `已更新（${st.finished_at}）`;
             toast('数据刷新完成', true);
+            disposeAllCharts();   // 销毁旧图表实例，避免 0 尺寸 Canvas 残留
             state.overview = null; state.backtest = null; state.health = null;
             state.boards = {}; state.loaded = { today: false, backtest: false };
             const active = document.querySelector('.tab.active').dataset.tab;
@@ -647,6 +795,70 @@ async function refreshData() {
   }
 }
 $('#btn-refresh').addEventListener('click', refreshData);
+
+/* ---------------- 更新数据（联网抓取全流程，约 20-40 分钟） ---------------- */
+let updatePolling = false;
+function renderUpdateProgress(st) {
+  const done = st.steps.filter(s => s.status === 'ok').length;
+  $('#update-msg').textContent = `更新中 ${done + 1}/${st.steps.length} · ${st.step}…`;
+}
+function pollUpdate(btn) {
+  if (updatePolling) return;
+  updatePolling = true;
+  const timer = setInterval(async () => {
+    try {
+      const st = await api('/api/update_status');
+      if (st.running) { renderUpdateProgress(st); return; }
+      clearInterval(timer); updatePolling = false;
+      btn.disabled = false; btn.innerHTML = '⬇ 更新数据';
+      if (st.ok === null) {   // 更新中途服务重启过，状态已丢失
+        $('#update-msg').textContent = '更新中断：服务重启过，请重新发起';
+        return;
+      }
+      if (st.ok) {
+        $('#update-msg').textContent = `已更新（${st.finished_at}）`;
+        toast('数据更新完成', true);
+        disposeAllCharts();   // 销毁旧图表实例，避免 0 尺寸 Canvas 残留
+        state.overview = null; state.backtest = null; state.health = null;
+        state.boards = {}; state.loaded = { today: false, backtest: false };
+        const active = document.querySelector('.tab.active').dataset.tab;
+        state.currentBoard = null;
+        $('#board-select').innerHTML = '';   // 排名可能变化，强制重建下拉选项
+        await switchTab(active);
+      } else {
+        $('#update-msg').textContent = st.step ? `更新失败：${st.step}` : '更新失败';
+        toast('更新失败：' + (st.log_tail || '未知错误').split('\n').pop());
+      }
+    } catch (e) { /* 轮询失败下轮再试 */ }
+  }, 3000);
+}
+async function updateData() {
+  const btn = $('#btn-update');
+  if (!confirm('更新数据要联网抓取（约 20-40 分钟），期间看板继续显示旧数据。\n现在开始？')) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">⟳</span> 更新中…';
+  try {
+    const r = await api('/api/update', { method: 'POST' });
+    $('#update-msg').textContent = r.message;
+    if (!r.started) { btn.disabled = false; btn.innerHTML = '⬇ 更新数据'; return; }
+    pollUpdate(btn);
+  } catch (e) {
+    btn.disabled = false; btn.innerHTML = '⬇ 更新数据';
+  }
+}
+$('#btn-update').addEventListener('click', updateData);
+// 页面打开时若已有更新在跑（例如中途刷新过页面），恢复进度显示
+(async function resumeUpdate() {
+  try {
+    const st = await api('/api/update_status');
+    if (st.running) {
+      const btn = $('#btn-update');
+      btn.disabled = true; btn.innerHTML = '<span class="spin">⟳</span> 更新中…';
+      renderUpdateProgress(st);
+      pollUpdate(btn);
+    }
+  } catch (e) { /* 服务未就绪时忽略 */ }
+})();
 
 /* ---------------- 表头排序 ---------------- */
 document.querySelectorAll('#rank-table th.sortable').forEach(th =>

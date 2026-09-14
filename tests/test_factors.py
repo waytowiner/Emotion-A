@@ -172,6 +172,25 @@ class TestFactors:
         # 分母只算 2 只交易中的股票：1/2，而非 1/3
         assert f.loc[D1, "A"] == pytest.approx(0.5)
 
+    def test_multi_board_membership(self):
+        """一股多板：股票同时属于母板块与细分板块时，两个板块都应计入因子。
+
+        东财行业口径下个股天然有多重板块归属；若按 code 去重只保留一个板块，
+        三级细分板块会整板缺失（2026-08 曾因此 35 个细分板块情绪分全 NaN）。
+        """
+        rows = [
+            _row(D1, "600001", 11.0, 11.0, 10.0),   # 涨停，同属 P 与 S
+            _row(D1, "600002", 10.0, 10.0, 0.0),    # 平盘，只属于 P
+        ]
+        flagged = flag_limit_up(pd.DataFrame(rows))
+        bm = pd.DataFrame({"code": ["600001", "600002", "600001"],
+                           "board_code": ["P", "P", "S"]})
+        f = factor_limit_up_strength(flagged, bm)
+        assert f.loc[D1, "P"] == pytest.approx(0.5)   # 母板块 1/2
+        assert f.loc[D1, "S"] == pytest.approx(1.0)   # 细分板块唯一成分股涨停
+        g = factor_breadth(flagged, bm)
+        assert g.loc[D1, "S"] == pytest.approx(1.0)   # 宽度因子同样覆盖细分板块
+
     def test_turnover_heat_market_total(self):
         """提供全市场成交额时，占比为板块成交额 / 全市场成交额。"""
         flagged, bm = _fixture_two_boards()  # 每股每日 amount=1e8，板块池合计 4e8

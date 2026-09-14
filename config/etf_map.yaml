@@ -1,339 +1,441 @@
 # 板块 ↔ ETF 映射（scripts/build_etf_map.py 生成，可手工编辑后重跑 dump）
 # etf: null 表示无直接对应 ETF；注释注明匹配方式（manual/auto:关键词）
-881121:
+BK1298:
+  name: 文字媒体
+  etf:
+    - {code: "512980", name: "传媒ETF广发"}  # auto:传媒
+    - {code: "159805", name: "传媒ETF"}  # auto:传媒
+BK1295:
+  name: 其他数字媒体
+  etf:
+    - {code: "512980", name: "传媒ETF广发"}  # auto:传媒
+    - {code: "159805", name: "传媒ETF"}  # auto:传媒
+BK1448:
+  name: 横向通用软件
+  etf:
+    - {code: "159852", name: "软件ETF"}  # auto:软件
+    - {code: "515230", name: "软件ETF国泰"}  # auto:软件
+BK1221:
+  name: 数字媒体
+  etf:
+    - {code: "512980", name: "传媒ETF广发"}  # auto:传媒
+    - {code: "159805", name: "传媒ETF"}  # auto:传媒
+BK1565:
+  name: 会展服务
+  etf: null  # 无直接ETF
+BK1328:
+  name: 集成电路封测
+  etf:
+    - {code: "159558", name: "半导体E"}  # auto:半导体
+    - {code: "512480", name: "半导体ETF国联安"}  # auto:半导体
+BK1325:
+  name: 半导体材料
+  etf:
+    - {code: "512480", name: "半导体ETF国联安"}  # manual
+BK1408:
+  name: 机器人
+  etf:
+    - {code: "562500", name: "机器人ETF华夏"}  # manual
+BK1293:
+  name: 营销代理
+  etf:
+    - {code: "512980", name: "传媒ETF广发"}  # auto:传媒
+    - {code: "159805", name: "传媒ETF"}  # auto:传媒
+BK1591:
+  name: 通信网络设备及器件
+  etf:
+    - {code: "515880", name: "通信ETF国泰"}  # auto:通信
+    - {code: "515050", name: "通信ETF华夏"}  # auto:通信
+BK1294:
+  name: 门户网站
+  etf:
+    - {code: "512980", name: "传媒ETF广发"}  # auto:传媒
+    - {code: "159805", name: "传媒ETF"}  # auto:传媒
+BK1326:
+  name: 半导体设备
+  etf:
+    - {code: "159516", name: "半导设备"}  # manual
+BK1334:
+  name: 光学元件
+  etf:
+    - {code: "515260", name: "电子ETF华宝"}  # manual
+BK1036:
   name: 半导体
   etf:
     - {code: "512480", name: "半导体ETF国联安"}  # manual
     - {code: "159995", name: "芯片ETF"}  # manual
-881273:
-  name: 白酒
-  etf:
-    - {code: "512690", name: "酒ETF鹏华"}  # manual
-881131:
-  name: 白色家电
-  etf:
-    - {code: "159996", name: "家电ETF"}  # manual
-881156:
-  name: 保险
-  etf:
-    - {code: "512070", name: "证券保险ETF易方达"}  # manual
-881138:
-  name: 包装印刷
-  etf: null  # 无直接ETF
-881174:
-  name: 厨卫电器
-  etf:
-    - {code: "159996", name: "家电ETF"}  # manual
-881281:
-  name: 电池
-  etf:
-    - {code: "159755", name: "电池ETF"}  # manual
-881277:
-  name: 电机
-  etf: null  # 无直接ETF
-881145:
-  name: 电力
-  etf:
-    - {code: "159611", name: "电力ETF"}  # manual
-881278:
-  name: 电网设备
-  etf:
-    - {code: "159611", name: "电力ETF"}  # manual
-881283:
-  name: 多元金融
-  etf:
-    - {code: "512070", name: "证券保险ETF易方达"}  # manual
-881172:
-  name: 电子化学品
+BK1340:
+  name: 印制电路板
   etf:
     - {code: "515260", name: "电子ETF华宝"}  # manual
-881153:
-  name: 房地产
+BK1220:
+  name: 广告营销
   etf:
-    - {code: "512200", name: "房地产ETF南方"}  # manual
-881280:
-  name: 风电设备
+    - {code: "512980", name: "传媒ETF广发"}  # auto:传媒
+    - {code: "159805", name: "传媒ETF"}  # auto:传媒
+BK1327:
+  name: 分立器件
   etf:
-    - {code: "515790", name: "光伏ETF华泰柏瑞"}  # manual
-881167:
-  name: 非金属材料
-  etf: null  # 无直接ETF
-881136:
-  name: 服装家纺
-  etf: null  # 无直接ETF
-881135:
-  name: 纺织制造
-  etf: null  # 无直接ETF
-881268:
-  name: 工程机械
+    - {code: "159558", name: "半导体E"}  # auto:半导体
+    - {code: "512480", name: "半导体ETF国联安"}  # auto:半导体
+BK1444:
+  name: IT服务Ⅲ
   etf:
-    - {code: "516960", name: "机械ETF国泰"}  # manual
-881279:
-  name: 光伏设备
+    - {code: "159998", name: "计算机"}  # auto:计算机
+    - {code: "159586", name: "计算机NF"}  # auto:计算机
+BK1238:
+  name: IT服务Ⅱ
   etf:
-    - {code: "515790", name: "光伏ETF华泰柏瑞"}  # manual
-881169:
-  name: 贵金属
-  etf:
-    - {code: "518880", name: "黄金ETF华安"}  # manual
-881269:
-  name: 轨交设备
-  etf: null  # 无直接ETF
-881148:
-  name: 港口航运
-  etf: null  # 无直接ETF
-881149:
-  name: 公路铁路运输
-  etf: null  # 无直接ETF
-881112:
-  name: 钢铁
-  etf:
-    - {code: "515210", name: "钢铁ETF国泰"}  # manual
-881122:
-  name: 光学光电子
-  etf:
-    - {code: "515260", name: "电子ETF华宝"}  # manual
-881168:
-  name: 工业金属
-  etf:
-    - {code: "512400", name: "有色金属ETF南方"}  # manual
-881284:
-  name: 环保设备
-  etf:
-    - {code: "512580", name: "环保ETF广发"}  # auto:环保
-    - {code: "159861", name: "环保ETF"}  # auto:环保
-881181:
-  name: 环境治理
-  etf: null  # 无直接ETF
-881177:
-  name: 互联网电商
-  etf: null  # 无直接ETF
-881132:
-  name: 黑色家电
-  etf:
-    - {code: "159996", name: "家电ETF"}  # manual
-881264:
-  name: 化学纤维
-  etf: null  # 无直接ETF
-881108:
-  name: 化学原料
-  etf:
-    - {code: "159870", name: "化工ETF"}  # manual
-881109:
-  name: 化学制品
-  etf:
-    - {code: "159870", name: "化工ETF"}  # manual
-881140:
-  name: 化学制药
-  etf:
-    - {code: "512010", name: "医药ETF易方达"}  # manual
-881271:
-  name: IT服务
-  etf:
-    - {code: "512720", name: "计算机ETF国泰"}  # manual
-881151:
-  name: 机场航运
-  etf: null  # 无直接ETF
-881276:
-  name: 军工电子
-  etf:
-    - {code: "512660", name: "军工ETF国泰"}  # manual
-881166:
-  name: 军工装备
-  etf:
-    - {code: "512660", name: "军工ETF国泰"}  # manual
-881139:
-  name: 家居用品
-  etf: null  # 无直接ETF
-881130:
-  name: 计算机设备
-  etf:
-    - {code: "512720", name: "计算机ETF国泰"}  # manual
-881114:
-  name: 金属新材料
-  etf:
-    - {code: "512400", name: "有色金属ETF南方"}  # manual
-881178:
-  name: 教育
-  etf:
-    - {code: "513360", name: "教育ETF博时"}  # manual
-881115:
-  name: 建筑材料
-  etf:
-    - {code: "159745", name: "建材ETF"}  # manual
-881116:
-  name: 建筑装饰
-  etf:
-    - {code: "516970", name: "基建ETF广发"}  # manual
-881158:
-  name: 零售
-  etf: null  # 无直接ETF
-881160:
-  name: 旅游及酒店
-  etf:
-    - {code: "159766", name: "旅游ETF"}  # manual
-881182:
-  name: 美容护理
-  etf: null  # 无直接ETF
-881105:
-  name: 煤炭开采加工
-  etf:
-    - {code: "515220", name: "煤炭ETF国泰"}  # manual
-881159:
-  name: 贸易
-  etf: null  # 无直接ETF
-881103:
-  name: 农产品加工
-  etf:
-    - {code: "159825", name: "农业ETF"}  # manual
-881263:
-  name: 农化制品
-  etf:
-    - {code: "159870", name: "化工ETF"}  # manual
-881267:
-  name: 能源金属
-  etf:
-    - {code: "512400", name: "有色金属ETF南方"}  # manual
-881128:
-  name: 汽车服务及其他
-  etf: null  # 无直接ETF
-881126:
-  name: 汽车零部件
-  etf:
-    - {code: "516110", name: "汽车ETF国泰"}  # manual
-881125:
-  name: 汽车整车
-  etf:
-    - {code: "516110", name: "汽车ETF国泰"}  # manual
-881282:
-  name: 其他电源设备
-  etf: null  # 无直接ETF
-881123:
-  name: 其他电子
-  etf:
-    - {code: "515260", name: "电子ETF华宝"}  # manual
-881179:
-  name: 其他社会服务
-  etf: null  # 无直接ETF
-881272:
+    - {code: "159998", name: "计算机"}  # auto:计算机
+    - {code: "159586", name: "计算机NF"}  # auto:计算机
+BK0737:
   name: 软件开发
   etf:
-    - {code: "159852", name: "软件ETF"}  # manual
-881146:
-  name: 燃气
-  etf: null  # 无直接ETF
-881265:
-  name: 塑料制品
-  etf: null  # 无直接ETF
-881134:
-  name: 食品加工制造
+    - {code: "159852", name: "软件ETF"}  # auto:软件
+    - {code: "515230", name: "软件ETF国泰"}  # auto:软件
+BK1331:
+  name: 数字芯片设计
   etf:
-    - {code: "515170", name: "食品饮料ETF华夏"}  # manual
-881142:
-  name: 生物制品
+    - {code: "159995", name: "芯片ETF"}  # manual
+BK1589:
+  name: 通信应用增值服务
   etf:
-    - {code: "512010", name: "医药ETF易方达"}  # manual
-881180:
-  name: 石油加工贸易
-  etf: null  # 无直接ETF
-881162:
-  name: 通信服务
+    - {code: "515880", name: "通信ETF国泰"}  # auto:通信
+    - {code: "515050", name: "通信ETF华夏"}  # auto:通信
+BK1330:
+  name: 模拟芯片设计
   etf:
-    - {code: "515880", name: "通信ETF国泰"}  # manual
-881129:
-  name: 通信设备
+    - {code: "159995", name: "芯片ETF"}  # manual
+BK1297:
+  name: 图片媒体
   etf:
-    - {code: "515880", name: "通信ETF国泰"}  # manual
-881117:
-  name: 通用设备
+    - {code: "512980", name: "传媒ETF广发"}  # auto:传媒
+    - {code: "159805", name: "传媒ETF"}  # auto:传媒
+BK1410:
+  name: 其他自动化设备
   etf:
-    - {code: "516960", name: "机械ETF国泰"}  # manual
-881164:
-  name: 文化传媒
-  etf:
-    - {code: "512980", name: "传媒ETF广发"}  # manual
-881152:
-  name: 物流
-  etf:
-    - {code: "516910", name: "物流ETF富国"}  # manual
-881124:
-  name: 消费电子
-  etf:
-    - {code: "159732", name: "消费电子"}  # manual
-881173:
-  name: 小家电
-  etf:
-    - {code: "159996", name: "家电ETF"}  # manual
-881170:
-  name: 小金属
-  etf:
-    - {code: "512400", name: "有色金属ETF南方"}  # manual
-881266:
-  name: 橡胶制品
-  etf: null  # 无直接ETF
-881270:
+    - {code: "159530", name: "机器人E"}  # auto:机器人
+    - {code: "562500", name: "机器人ETF华夏"}  # auto:机器人
+BK0459:
   name: 元件
   etf:
     - {code: "515260", name: "电子ETF华宝"}  # manual
-881175:
-  name: 医疗服务
+BK1207:
+  name: 计算机
   etf:
-    - {code: "512170", name: "医疗ETF华宝"}  # manual
-881144:
-  name: 医疗器械
-  etf:
-    - {code: "512170", name: "医疗ETF华宝"}  # manual
-881133:
-  name: 饮料制造
-  etf:
-    - {code: "515170", name: "食品饮料ETF华夏"}  # manual
-881107:
-  name: 油气开采及服务
-  etf: null  # 无直接ETF
-881274:
-  name: 影视院线
-  etf:
-    - {code: "512980", name: "传媒ETF广发"}  # manual
-881275:
-  name: 游戏
-  etf:
-    - {code: "159869", name: "游戏ETF"}  # manual
-881155:
-  name: 银行
-  etf:
-    - {code: "512800", name: "银行ETF华宝"}  # manual
-881143:
-  name: 医药商业
-  etf:
-    - {code: "512010", name: "医药ETF易方达"}  # manual
-881102:
-  name: 养殖业
-  etf:
-    - {code: "159865", name: "养殖ETF"}  # manual
-881171:
+    - {code: "512720", name: "计算机ETF国泰"}  # manual
+BK1237:
   name: 自动化设备
   etf:
-    - {code: "562500", name: "机器人ETF华夏"}  # manual
-881165:
-  name: 综合
-  etf:
-    - {code: "159563", name: "创业综合"}  # auto:综合
-881157:
-  name: 证券
-  etf:
-    - {code: "512880", name: "证券ETF国泰"}  # manual
-881141:
-  name: 中药
-  etf:
-    - {code: "560080", name: "中药ETF汇添富"}  # manual
-881118:
-  name: 专用设备
-  etf:
-    - {code: "516960", name: "机械ETF国泰"}  # manual
-881137:
-  name: 造纸
+    - {code: "159530", name: "机器人E"}  # auto:机器人
+    - {code: "562500", name: "机器人ETF华夏"}  # auto:机器人
+BK1409:
+  name: 激光设备
   etf: null  # 无直接ETF
-881101:
-  name: 种植业与林业
+BK1332:
+  name: 电子化学品Ⅲ
   etf:
-    - {code: "159825", name: "农业ETF"}  # manual
+    - {code: "515260", name: "电子ETF华宝"}  # manual
+BK1039:
+  name: 电子化学品Ⅱ
+  etf:
+    - {code: "515260", name: "电子ETF华宝"}  # manual
+BK1602:
+  name: 诊断服务
+  etf:
+    - {code: "512170", name: "医疗ETF华宝"}  # manual
+BK1201:
+  name: 电子
+  etf:
+    - {code: "515260", name: "电子ETF华宝"}  # manual
+BK1447:
+  name: 垂直应用软件
+  etf:
+    - {code: "159852", name: "软件ETF"}  # auto:软件
+    - {code: "515230", name: "软件ETF国泰"}  # auto:软件
+BK1558:
+  name: 学历教育
+  etf:
+    - {code: "513360", name: "教育ETF博时"}  # auto:教育
+BK1329:
+  name: 集成电路制造
+  etf:
+    - {code: "159558", name: "半导体E"}  # auto:半导体
+    - {code: "512480", name: "半导体ETF国联安"}  # auto:半导体
+BK1445:
+  name: 安防设备
+  etf: null  # 无直接ETF
+BK1299:
+  name: 影视动漫制作
+  etf:
+    - {code: "516620", name: "影视ETF国泰"}  # auto:影视
+    - {code: "159855", name: "影视ETF"}  # auto:影视
+BK1477:
+  name: 其他专业工程
+  etf:
+    - {code: "516970", name: "基建ETF广发"}  # auto:基建
+    - {code: "159635", name: "基建50"}  # auto:基建
+BK1438:
+  name: 合成树脂
+  etf:
+    - {code: "159870", name: "化工ETF"}  # auto:化工
+    - {code: "516020", name: "化工ETF华宝"}  # auto:化工
+BK1407:
+  name: 工控设备
+  etf:
+    - {code: "159530", name: "机器人E"}  # auto:机器人
+    - {code: "562500", name: "机器人ETF华夏"}  # auto:机器人
+BK0448:
+  name: 通信设备
+  etf:
+    - {code: "515880", name: "通信ETF国泰"}  # auto:通信
+    - {code: "515050", name: "通信ETF华夏"}  # auto:通信
+BK1322:
+  name: 其他电源设备Ⅲ
+  etf: null  # 无直接ETF
+BK1336:
+  name: 其他电子Ⅲ
+  etf:
+    - {code: "515260", name: "电子ETF华宝"}  # manual
+BK1223:
+  name: 其他电子Ⅱ
+  etf:
+    - {code: "515260", name: "电子ETF华宝"}  # manual
+BK0735:
+  name: 计算机设备
+  etf:
+    - {code: "159998", name: "计算机"}  # auto:计算机
+    - {code: "159586", name: "计算机NF"}  # auto:计算机
+BK1339:
+  name: 被动元件
+  etf:
+    - {code: "515260", name: "电子ETF华宝"}  # manual
+BK1397:
+  name: 磨具磨料
+  etf: null  # 无直接ETF
+BK1215:
+  name: 通信
+  etf:
+    - {code: "515880", name: "通信ETF国泰"}  # manual
+BK1625:
+  name: 钨
+  etf:
+    - {code: "562800", name: "稀有金属ETF嘉实"}  # auto:稀有金属
+    - {code: "159608", name: "稀有金属"}  # auto:稀有金属
+BK1222:
+  name: 影视院线
+  etf:
+    - {code: "516620", name: "影视ETF国泰"}  # auto:影视
+    - {code: "159855", name: "影视ETF"}  # auto:影视
+BK1396:
+  name: 金属制品
+  etf: null  # 无直接ETF
+BK1592:
+  name: 通信线缆及配套
+  etf:
+    - {code: "515880", name: "通信ETF国泰"}  # auto:通信
+    - {code: "515050", name: "通信ETF华夏"}  # auto:通信
+BK0486:
+  name: 传媒
+  etf:
+    - {code: "512980", name: "传媒ETF广发"}  # manual
+BK1338:
+  name: 消费电子零部件及组装
+  etf:
+    - {code: "159732", name: "消费电子"}  # auto:消费电子
+    - {code: "562950", name: "消费电子ETF易方达"}  # auto:消费电子
+BK1446:
+  name: 其他计算机设备
+  etf:
+    - {code: "159998", name: "计算机"}  # auto:计算机
+    - {code: "159586", name: "计算机NF"}  # auto:计算机
+BK1473:
+  name: 园林工程
+  etf:
+    - {code: "516970", name: "基建ETF广发"}  # auto:基建
+    - {code: "159635", name: "基建50"}  # auto:基建
+BK1439:
+  name: 膜材料
+  etf:
+    - {code: "159703", name: "新材料"}  # auto:新材料
+    - {code: "516710", name: "新材料ETF华夏"}  # auto:新材料
+BK1037:
+  name: 消费电子
+  etf:
+    - {code: "159732", name: "消费电子"}  # auto:消费电子
+    - {code: "562950", name: "消费电子ETF易方达"}  # auto:消费电子
+BK1395:
+  name: 机床工具
+  etf:
+    - {code: "159663", name: "机床"}  # auto:机床
+BK0736:
+  name: 通信服务
+  etf:
+    - {code: "515880", name: "通信ETF国泰"}  # auto:通信
+    - {code: "515050", name: "通信ETF华夏"}  # auto:通信
+BK1617:
+  name: 黄金
+  etf:
+    - {code: "518880", name: "黄金ETF华安"}  # manual
+BK1038:
+  name: 光学光电子
+  etf:
+    - {code: "515260", name: "电子ETF华宝"}  # manual
+BK1385:
+  name: 航天装备Ⅲ
+  etf:
+    - {code: "512660", name: "军工ETF国泰"}  # manual
+BK1232:
+  name: 航天装备Ⅱ
+  etf:
+    - {code: "512660", name: "军工ETF国泰"}  # manual
+BK1386:
+  name: 军工电子Ⅲ
+  etf:
+    - {code: "512660", name: "军工ETF国泰"}  # manual
+BK1233:
+  name: 军工电子Ⅱ
+  etf:
+    - {code: "512660", name: "军工ETF国泰"}  # manual
+BK1478:
+  name: 装修装饰Ⅲ
+  etf:
+    - {code: "159787", name: "建筑材料"}  # auto:建筑
+BK0725:
+  name: 装修装饰Ⅱ
+  etf:
+    - {code: "159787", name: "建筑材料"}  # auto:建筑
+BK1387:
+  name: 环保设备Ⅲ
+  etf:
+    - {code: "512580", name: "环保ETF广发"}  # auto:环保
+    - {code: "159861", name: "环保ETF"}  # auto:环保
+BK1234:
+  name: 环保设备Ⅱ
+  etf:
+    - {code: "512580", name: "环保ETF广发"}  # auto:环保
+    - {code: "159861", name: "环保ETF"}  # auto:环保
+BK1034:
+  name: 其他电源设备Ⅱ
+  etf: null  # 无直接ETF
+BK1590:
+  name: 其他通信设备
+  etf:
+    - {code: "515880", name: "通信ETF国泰"}  # auto:通信
+    - {code: "515050", name: "通信ETF华夏"}  # auto:通信
+BK0545:
+  name: 通用设备
+  etf:
+    - {code: "560280", name: "工程机械ETF广发"}  # auto:机械
+    - {code: "515970", name: "工程机械ETF华夏"}  # auto:机械
+BK1556:
+  name: 教育运营及其他
+  etf:
+    - {code: "513360", name: "教育ETF博时"}  # auto:教育
+BK0458:
+  name: 仪器仪表
+  etf: null  # 无直接ETF
+BK0732:
+  name: 贵金属
+  etf:
+    - {code: "518880", name: "黄金ETF华安"}  # manual
+BK0454:
+  name: 塑料
+  etf:
+    - {code: "159870", name: "化工ETF"}  # auto:化工
+    - {code: "516020", name: "化工ETF华宝"}  # auto:化工
+BK1307:
+  name: 电机Ⅲ
+  etf: null  # 无直接ETF
+BK1030:
+  name: 电机Ⅱ
+  etf: null  # 无直接ETF
+BK1437:
+  name: 改性塑料
+  etf:
+    - {code: "159870", name: "化工ETF"}  # auto:化工
+    - {code: "516020", name: "化工ETF华宝"}  # auto:化工
+BK1619:
+  name: 其他金属新材料
+  etf:
+    - {code: "159703", name: "新材料"}  # auto:新材料
+    - {code: "516710", name: "新材料ETF华夏"}  # auto:新材料
+BK1546:
+  name: 电商服务
+  etf: null  # 无直接ETF
+BK1405:
+  name: 其他专用设备
+  etf: null  # 无直接ETF
+BK1599:
+  name: 其他医疗服务
+  etf:
+    - {code: "512170", name: "医疗ETF华宝"}  # manual
+BK1398:
+  name: 其他通用设备
+  etf:
+    - {code: "560280", name: "工程机械ETF广发"}  # auto:机械
+    - {code: "515970", name: "工程机械ETF华夏"}  # auto:机械
+BK1301:
+  name: 游戏Ⅲ
+  etf:
+    - {code: "159869", name: "游戏ETF"}  # manual
+BK1046:
+  name: 游戏Ⅱ
+  etf:
+    - {code: "159869", name: "游戏ETF"}  # manual
+BK1205:
+  name: 机械设备
+  etf:
+    - {code: "560280", name: "工程机械ETF广发"}  # auto:机械
+    - {code: "515970", name: "工程机械ETF华夏"}  # auto:机械
+BK0740:
+  name: 教育
+  etf:
+    - {code: "513360", name: "教育ETF博时"}  # auto:教育
+BK1624:
+  name: 其他小金属
+  etf:
+    - {code: "562800", name: "稀有金属ETF嘉实"}  # auto:稀有金属
+    - {code: "159608", name: "稀有金属"}  # auto:稀有金属
+BK1333:
+  name: LED
+  etf:
+    - {code: "515260", name: "电子ETF华宝"}  # manual
+BK1288:
+  name: 金属新材料
+  etf:
+    - {code: "159703", name: "新材料"}  # auto:新材料
+    - {code: "516710", name: "新材料ETF华夏"}  # auto:新材料
+BK1588:
+  name: 通信工程及服务
+  etf:
+    - {code: "515880", name: "通信ETF国泰"}  # auto:通信
+    - {code: "515050", name: "通信ETF华夏"}  # auto:通信
+BK1391:
+  name: 综合环境治理
+  etf:
+    - {code: "512580", name: "环保ETF广发"}  # auto:环保
+    - {code: "159861", name: "环保ETF"}  # auto:环保
+BK1027:
+  name: 小金属
+  etf:
+    - {code: "562800", name: "稀有金属ETF嘉实"}  # auto:稀有金属
+    - {code: "159608", name: "稀有金属"}  # auto:稀有金属
+BK1401:
+  name: 纺织服装设备
+  etf: null  # 无直接ETF
+BK1425:
+  name: 胶黏剂及胶带
+  etf:
+    - {code: "159870", name: "化工ETF"}  # auto:化工
+    - {code: "516020", name: "化工ETF华宝"}  # auto:化工
+BK1291:
+  name: 电视广播Ⅲ
+  etf:
+    - {code: "512980", name: "传媒ETF广发"}  # auto:传媒
+    - {code: "159805", name: "传媒ETF"}  # auto:传媒
+BK1219:
+  name: 电视广播Ⅱ
+  etf:
+    - {code: "512980", name: "传媒ETF广发"}  # auto:传媒
+    - {code: "159805", name: "传媒ETF"}  # auto:传媒

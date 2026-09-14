@@ -39,6 +39,18 @@ class TestScore:
         combined = combine_factors({"x": f1, "ghost": None}, {"x": 1.0, "ghost": 1.0})
         assert combined.notna().any().any()
 
+    def test_combine_z_clip(self):
+        # 21 板块构造单因子极端值：[100, 0, 0, ...] 的横截面 z≈4.37 > 3
+        boards = [f"B{i}" for i in range(21)]
+        f = pd.DataFrame(
+            {b: [(100.0 if b == "B0" else 0.0)] * len(DATES) for b in boards},
+            index=DATES)
+        unclipped = combine_factors({"x": f}, {"x": 1.0}, z_clip=None)
+        assert unclipped["B0"].iloc[-1] > 3.0
+        # 缺省 z_clip=3.0：极端单因子被截断，不再绑架综合分
+        clipped = combine_factors({"x": f}, {"x": 1.0})
+        assert clipped["B0"].iloc[-1] == pytest.approx(3.0)
+
     def test_build_scores_shapes(self):
         f = _panel(lambda b, i: i + BOARDS.index(b) * 2)
         raw, smoothed, pct = build_scores({"x": f}, {"x": 1.0}, smooth_window=5)
@@ -91,4 +103,95 @@ class TestSignal:
 
     def test_empty_input(self):
         sig = detect_signals(pd.DataFrame(), pd.DataFrame())
-        assert sig == {"heating": [], "cooling": [], "hot": [], "cold": [], "switching": []}
+        assert sig == {"heating": [], "cooling": [], "hot": [], "cold": [],
+                       "switching": [], "bottom_reversal": [],
+                       "extreme_hot": [], "extreme_cold": [],
+                       "fund_emotion_divergence": []}
+
+
+class TestBreakthrough:
+    """P1 突变穿透规则测试（合成数据，验证不进合成情绪分、不经平滑）。
+
+    注意：默认 ndays=3（fund_positive_days 已从 2 收紧到 3），
+    默认 fund_flow_z_threshold=1.5（已从 2.0 放宽）。
+    """
+
+    DATES = pd.date_range("2026-01-05", periods=12, freq="B")
+
+    def _panel(self, boards, fill=0.0):
+        return pd.DataFrame(fill, index=self.DATES, columns=boards, dtype=float)
+
+    def test_bottom_reversal(self):
+        # 8 板块：E 末日资金巨量流入（横截面 z≈2.47>2）且 E 处冰点
+        boards = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        fund_flow = self._panel(boards)
+        fund_flow.iloc[-1, boards.index("E")] = 1e9
+        smoothed = self._panel(boards, fill=0.5)
+        smoothed.iloc[-1, boards.index("E")] = -2.0
+        pct = self._panel(boards, fill=0.5)
+        pct.iloc[-1, boards.index("E")] = 0.05
+        sig = detect_signals(smoothed, pct, fund_flow=fund_flow,
+                             cold_quantile=0.1, hot_quantile=0.9)
+        assert sig["bottom_reversal"] == ["E"]
+
+    def test_extreme_hot(self):
+        # A 亢奋 + 单因子横截面 z≈2.47>2 → 热端
+        boards = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        factor = self._panel(boards)
+        factor.iloc[-1, 0] = 10.0
+        smoothed = self._panel(boards, fill=0.0)
+        pct = self._panel(boards, fill=0.5)
+        pct.iloc[-1, 0] = 0.95
+        sig = detect_signals(smoothed, pct, factors={"f": factor},
+                             cold_quantile=0.1, hot_quantile=0.9)
+        assert "A" in sig["extreme_hot"]
+        assert sig["extreme_cold"] == []  # 只有亢奋没有冰点，冷端应为空
+
+    def test_extreme_cold(self):
+        # E 冰点 + 单因子横截面 z≈2.47>2 → 冷端
+        boards = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        factor = self._panel(boards)
+        factor.iloc[-1, boards.index("E")] = 10.0
+        smoothed = self._panel(boards, fill=0.0)
+        pct = self._panel(boards, fill=0.5)
+        pct.iloc[-1, boards.index("E")] = 0.05
+        sig = detect_signals(smoothed, pct, factors={"f": factor},
+                             cold_quantile=0.1, hot_quantile=0.9)
+        assert "E" in sig["extreme_cold"]
+        assert sig["extreme_hot"] == []  # 只有冰点没有亢奋，热端应为空
+
+    def test_fund_emotion_divergence(self):
+        # B 资金连续 3 日为正 + 情绪分为负（ndays 默认 3）
+        boards = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        fund_flow = self._panel(boards)
+        fund_flow.iloc[-3, 1] = 1e8
+        fund_flow.iloc[-2, 1] = 1e8
+        fund_flow.iloc[-1, 1] = 1e8
+        smoothed = self._panel(boards, fill=0.0)
+        smoothed.iloc[-1, 1] = -1.5
+        pct = self._panel(boards, fill=0.5)
+        sig = detect_signals(smoothed, pct, fund_flow=fund_flow,
+                             cold_quantile=0.1, hot_quantile=0.9)
+        assert "B" in sig["fund_emotion_divergence"]
+
+    def test_no_inputs_no_breakthrough(self):
+        boards = ["A", "B", "C", "D", "E"]
+        smoothed = self._panel(boards, fill=0.0)
+        pct = self._panel(boards, fill=0.5)
+        sig = detect_signals(smoothed, pct)
+        assert sig["bottom_reversal"] == []
+        assert sig["extreme_hot"] == []
+        assert sig["extreme_cold"] == []
+        assert sig["fund_emotion_divergence"] == []
+
+    def test_disabled_flag(self):
+        boards = ["A", "B", "C", "D", "E", "F", "G", "H"]
+        fund_flow = self._panel(boards)
+        fund_flow.iloc[-1, boards.index("E")] = 1e9
+        smoothed = self._panel(boards, fill=0.5)
+        smoothed.iloc[-1, boards.index("E")] = -2.0
+        pct = self._panel(boards, fill=0.5)
+        pct.iloc[-1, boards.index("E")] = 0.05
+        sig = detect_signals(smoothed, pct, fund_flow=fund_flow,
+                             breakthrough_cfg={"enabled": False})
+        assert sig["bottom_reversal"] == []

@@ -30,11 +30,15 @@ def main() -> None:
     factors = compute_all_factors(data["stock_daily"], data["board_map"],
                                   data["board_kline"],
                                   market_total=data.get("market_total"))
+    # P0 穿透指标：成交额×涨跌幅代理（信号层用，不进合成情绪分）。
+    # 它不是主动买卖盘意义的真实资金净流入。
+    flow_proxy = signal.compute_board_flow_proxy(data["stock_daily"], data["board_map"])
 
     print("[3/4] 合成情绪分 ...")
     raw, smoothed, pct = score.build_scores(
         factors, cfg["weights"], cfg.get("smooth_window", 5),
-        lookback=cfg.get("score_lookback", 250))
+        lookback=cfg.get("score_lookback", 250),
+        z_clip=cfg.get("score_z_clip", 3.0))
 
     print("[4/4] 生成信号与报告 ...")
     sig_cfg = cfg["signal"]
@@ -43,17 +47,42 @@ def main() -> None:
         consecutive_days=sig_cfg.get("consecutive_days", 3),
         hot_quantile=sig_cfg.get("hot_quantile", 0.9),
         cold_quantile=sig_cfg.get("cold_quantile", 0.1),
+        factors=factors, flow_proxy=flow_proxy,
+        breakthrough_cfg=sig_cfg.get("breakthrough"),
     )
     # 信号健康度：最近 60 日 IC 监控（风格切换感知）
     from emotion import backtest as _bt
     board_close = data["board_kline"].pivot(
         index="date", columns="board_code", values="close").sort_index()
     health = _bt.recent_signal_health(smoothed, board_close, days=60)
+    # 风格判定（regime 自适应）：滚动已实现 IC + 回撤护栏 -> 方向建议
+    regime_cfg = cfg.get("regime", {})
+    regime = _bt.regime_state(
+        smoothed, board_close,
+        ic_window=regime_cfg.get("ic_window", 15),
+        threshold=regime_cfg.get("threshold", 0.02),
+        horizon=regime_cfg.get("horizon", 5),
+        min_obs=regime_cfg.get("min_obs", 10),
+        guard_days=regime_cfg.get("guard_days", 10),
+        guard_threshold=regime_cfg.get("guard_threshold", -0.03),
+        vol_window=regime_cfg.get("vol_window", 20),
+        vol_threshold=regime_cfg.get("vol_threshold"),
+        require_robust_signal=regime_cfg.get("require_robust_signal", False),
+        robust_ic_window=regime_cfg.get("robust_ic_window", 60),
+        robust_bootstrap_samples=regime_cfg.get("robust_bootstrap_samples", 500),
+        mono_days=regime_cfg.get("mono_days"),
+    )
+    regime["ic_window"] = regime_cfg.get("ic_window", 15)
+    regime["guard_days"] = regime_cfg.get("guard_days", 10)
+    regime["mono_days"] = regime_cfg.get("mono_days")
+    # 因子层监控：逐因子 IC + 方向可信度（区分"可信为负"与"风格切换"）
+    factor_ic = _bt.factor_ic_snapshot(factors, board_close)
     date = smoothed.index[-1]
     md = report.build_report(date, smoothed, pct, signals, data["board_names"],
-                             health=health,
-                             universe={"board_source": cfg.get("board_source"),
-                                       "n_boards": int(data["boards"]["board_code"].nunique())})
+                              health=health, regime=regime,
+                              breakthrough=sig_cfg.get("breakthrough"),
+                              universe=data.get("universe"),
+                              factor_ic=factor_ic)
     md_path, csv_path = report.save_report(
         ROOT / cfg["paths"]["report_dir"], date, md, smoothed, data["board_names"])
     print(f"完成：{md_path}")

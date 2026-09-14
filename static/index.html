@@ -55,7 +55,7 @@ a { color: var(--accent); text-decoration: none; }
 /* ---------- 顶部栏 ---------- */
 .topbar {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-  padding: 12px 24px; border-bottom: 1px solid var(--border);
+  padding: 12px clamp(14px, 2.2vw, 44px); border-bottom: 1px solid var(--border);
   background: rgba(13, 17, 23, .8); backdrop-filter: blur(14px);
   position: sticky; top: 0; z-index: 100;
 }
@@ -94,7 +94,7 @@ a { color: var(--accent); text-decoration: none; }
 
 /* ---------- Tab 导航 ---------- */
 .tabs {
-  display: flex; gap: 6px; padding: 0 24px; border-bottom: 1px solid var(--border);
+  display: flex; gap: 6px; padding: 0 clamp(14px, 2.2vw, 44px); border-bottom: 1px solid var(--border);
   background: rgba(13, 17, 23, .8); backdrop-filter: blur(14px);
 }
 .tab {
@@ -109,7 +109,7 @@ a { color: var(--accent); text-decoration: none; }
 }
 
 /* ---------- 布局 ---------- */
-.container { max-width: 1280px; margin: 0 auto; padding: 22px 24px 60px; position: relative; z-index: 1; }
+.container { width: 100%; padding: 22px clamp(14px, 2.2vw, 44px) 60px; position: relative; z-index: 1; }
 .tab-page { display: none; }
 .tab-page.active { display: block; animation: fadeUp .4s both; }
 .card {
@@ -131,8 +131,8 @@ a { color: var(--accent); text-decoration: none; }
 .card h3 { font-size: 15px; font-weight: 700; margin-bottom: 12px; letter-spacing: .3px; }
 .card .hint { color: var(--text-faint); font-size: 12px; font-weight: 400; margin-left: 8px; }
 .grid { display: grid; gap: 16px; }
-.grid-5 { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
-.grid-2 { grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+.grid-5 { grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); }
+.grid-2 { grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); }
 
 /* ---------- 信号卡片 ---------- */
 .sig-card { min-height: 128px; }
@@ -241,6 +241,19 @@ tbody tr:hover {
     linear-gradient(120deg, rgba(240,185,11,.55), rgba(234,57,67,.45), rgba(88,166,255,.3)) border-box;
 }
 .hero b { font-size: 24px; font-weight: 800; padding: 0 2px; }
+.bt-window-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.bt-window-label { color: var(--text-faint); font-size: 12px; margin-right: 2px; }
+.bt-window-btn {
+  padding: 3px 14px; border-radius: 999px; cursor: pointer;
+  border: 1px solid #30363d; background: rgba(255,255,255,.04);
+  color: var(--text-dim); font-size: 13px; font-family: var(--mono);
+  transition: all .18s ease;
+}
+.bt-window-btn:hover { border-color: var(--gold); color: var(--gold); }
+.bt-window-btn.active {
+  border-color: var(--gold); color: var(--gold); font-weight: 700;
+  background: rgba(240,185,11,.10); box-shadow: 0 0 10px rgba(240,185,11,.18);
+}
 .risk-banner {
   background: rgba(234, 57, 67, .07); border: 1px solid rgba(234, 57, 67, .32);
   color: #ff9aa2; border-radius: 12px; padding: 13px 18px; font-size: 13px;
@@ -301,6 +314,24 @@ tbody tr:hover {
 .table-wrap { max-height: 560px; overflow-y: auto; }
 .table-wrap::-webkit-scrollbar { width: 8px; }
 .table-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 4px; }
+
+/* ---------- 帮助提示（大白话讲解） ---------- */
+.help-btn {
+  width: 18px; height: 18px; border-radius: 50%; margin-left: 8px;
+  border: 1px solid var(--text-faint); background: transparent;
+  color: var(--text-faint); font-size: 11px; cursor: pointer;
+  line-height: 1; vertical-align: middle; transition: all .18s;
+}
+.help-btn:hover { border-color: var(--gold); color: var(--gold); transform: scale(1.12); }
+.help-panel {
+  display: none; margin: 6px 0 14px; padding: 12px 16px; border-radius: 10px;
+  background: rgba(88, 166, 255, .07); border: 1px solid rgba(88, 166, 255, .25);
+  color: #c9d1d9; font-size: 12.5px; line-height: 1.85;
+}
+.help-panel.open { display: block; animation: fadeUp .3s both; }
+.help-panel b { color: var(--gold); font-weight: 600; }
+.help-panel .row { margin: 4px 0; }
+.help-panel .row i { font-style: normal; color: var(--accent); }
 </style>
 </head>
 <body>
@@ -318,6 +349,8 @@ tbody tr:hover {
     </span>
   </div>
   <div class="spacer"></div>
+  <span class="date" id="update-msg"></span>
+  <button class="btn" id="btn-update">⬇ 更新数据</button>
   <span class="date" id="refresh-msg"></span>
   <button class="btn" id="btn-refresh">⟳ 刷新数据</button>
 </header>
@@ -335,7 +368,12 @@ tbody tr:hover {
     <div class="grid grid-5" id="sig-cards"></div>
 
     <div class="card">
-      <h3>情绪分排名<span class="hint">左绿右红，越长代表情绪越极端；点击板块名可看详情</span></h3>
+      <h3>情绪分排名<span class="hint">左绿右红，越长代表情绪越极端；点击板块名可看详情</span><button class="help-btn" data-help="help-rank" title="情绪分是什么">?</button></h3>
+      <div class="help-panel" id="help-rank">
+        <div class="row"><b>情绪分：</b>系统给每个板块的"人气打分"，由涨停强度、赚钱效应、涨跌宽度等 6 个原料合成。分数高＝该板块当前人气旺、资金活跃。</div>
+        <div class="row"><b>时序分位：</b>该板块当前分数在它<b>自身近 120 天历史</b>中的位置（0~100%）。90% 以上＝亢奋，10% 以下＝冰点。</div>
+        <div class="row"><b>怎么用：</b>先看顶栏健康度灯和风格判定——判定为"动量市"时榜单顺势看（高分榜可关注）；"反转市"时反着看（高分榜是回避区，低分榜是补涨关注区）；"观望"时两榜只作观察。</div>
+      </div>
       <div id="chart-diverge" class="chart"></div>
     </div>
 
@@ -359,23 +397,52 @@ tbody tr:hover {
 
   <!-- ============ Tab2 回测验证 ============ -->
   <section class="tab-page" id="page-backtest">
-    <div class="card hero" id="bt-hero"></div>
+    <div class="card hero">
+      <div class="bt-window-bar" id="bt-window-bar"></div>
+      <span id="bt-hero"></span>
+      <button class="help-btn" data-help="help-bt-hero" title="怎么看懂这一页">?</button>
+      <div class="help-panel" id="help-bt-hero">
+        <div class="row"><b>这一页在干嘛：</b>用过去的历史数据做一次"模拟考试"——假装每周按当时榜单前 N 名买卖，看能赚多少。赚了，说明榜单打分在那段时间是有用的。</div>
+        <div class="row"><b>怎么看懂：</b>先看这行大字——策略年化 vs 大盘年化。策略明显高于大盘才算及格；再看下面"信号健康度"曲线，它告诉你<b>最近</b>打分还灵不灵（最要紧）。</div>
+        <div class="row"><b>调仓频率怎么选：</b>上方可切换"每周 / 每日"。默认每周——情绪分经过 5 日平滑，是中频信号，每天的排名变化大多是噪声；切到每日对照时注意绩效表最后一列<b>换仓成本损耗</b>会显著变大，日频多半跑不赢周频。</div>
+        <div class="row"><b>最重要的提醒：</b>历史模拟赚钱 ≠ 未来一定赚钱。市场风格一变（比如从"追涨赚钱"变成"追涨亏钱"），榜单可能突然失效——所以先看顶栏的健康度灯和风格判定，再决定信不信榜单。</div>
+      </div>
+    </div>
 
     <div class="card">
-      <h3>信号健康度走势<span class="hint">每日滚动 60 日的 IC 均值；在 0 轴上方说明打分近期能预测涨跌</span></h3>
+      <h3>信号健康度走势<span class="hint">每日滚动 60 日的 IC 均值，区间跟随上方回测窗口；在 0 轴上方说明打分近期能预测涨跌</span><button class="help-btn" data-help="help-ic" title="怎么读这张图">?</button></h3>
+      <div class="help-panel" id="help-ic">
+        <div class="row"><b>这条线是什么：</b>衡量"最近 60 天，榜单打分和实际涨跌有多一致"。越一致说明打分越准（数值范围 -1 ~ +1）。</div>
+        <div class="row"><b>怎么读：</b>线在 <b>0 轴上方（红色）</b>＝打分方向对，榜单顺势参考；线在 <b>0 轴下方（绿色）</b>＝打分方向反了，高分板块反而容易跌，这时榜单要<b>反着看</b>；只有站上虚线 0.03 以上才算"显著有效"。</div>
+        <div class="row"><b>省事的看法：</b>不用自己读线——顶栏健康度灯旁已新增<b>风格判定</b>（动量市/反转市/观望），判定为反转市时榜单会自动标注成"回避/关注"，跟着标注看就行。</div>
+      </div>
       <div id="chart-ic" class="chart"></div>
     </div>
 
     <div class="grid grid-2">
       <div class="card">
-        <h3>分层收益<span class="hint">把板块按情绪分分 5 组，看各组随后 5 天的平均收益</span></h3>
+        <h3>分层收益<span class="hint">把板块按情绪分分 5 组，看各组随后 5 天的平均收益</span><button class="help-btn" data-help="help-quant" title="怎么读这张图">?</button></h3>
+        <div class="help-panel" id="help-quant">
+          <div class="row"><b>逻辑：</b>把全部板块按情绪分从低到高切成 5 组（Q1 最低分 → Q5 最高分），统计每组<b>随后 5 天</b>平均赚多少。</div>
+          <div class="row"><b>理想形态：</b>柱子从左到右<b>越来越高</b>（阶梯状）——"分数高的真的涨得多"，打分有区分度。</div>
+          <div class="row"><b>反过来呢：</b>如果 Q1 比 Q5 高，说明市场在"补涨冷门、砸盘热门"（反转市），这时买低分组反而更赚——这正是 2026 年 7 月以来发生的情况。</div>
+          <div class="row"><b>颜色口径：</b>红柱＝该组赚钱，绿柱＝该组亏钱（与 A 股一致：红涨绿跌）。</div>
+        </div>
         <div id="chart-quant" class="chart"></div>
       </div>
       <div class="card">
-        <h3>打分到底有没有用？<span class="hint">IC 解读</span></h3>
+        <h3>打分到底有没有用？<span class="hint">IC 解读</span><button class="help-btn" data-help="help-ic-table" title="每一列是什么意思">?</button></h3>
+        <div class="help-panel" id="help-ic-table">
+          <div class="row"><b>前瞻窗口：</b>"打分之后过 5/10/20 天再看"，预测的时间距离。</div>
+          <div class="row"><b>IC 均值：</b>打分和未来涨跌的吻合度（-1 ~ +1）。正值说明排序方向一致，负数说明方向反了。</div>
+          <div class="row"><b>IR（重叠）：</b>IC 的朴素稳定性（均值 ÷ 波动）。前瞻收益会重叠，因此不能作为显著性证据。</div>
+          <div class="row"><b>HAC t / Bootstrap：</b>对前瞻收益重叠做时间相关性校正；Bootstrap 区间若覆盖 0，说明有效性尚不稳健。</div>
+          <div class="row"><b>IC 胜率：</b>打分方向判对的天数占比，> 55% 及格，60% 以上较好。</div>
+          <div class="row"><b>样本数：</b>参与统计的天数，越多越可信。</div>
+        </div>
         <div class="table-wrap" style="max-height:200px">
           <table id="ic-table">
-            <thead><tr><th class="l">前瞻窗口</th><th>IC 均值</th><th>IR</th><th>IC 胜率</th><th>样本数</th></tr></thead>
+            <thead><tr><th class="l">前瞻窗口</th><th>IC 均值</th><th>IR（重叠）</th><th>HAC t</th><th>Bootstrap 95% CI</th><th>IC 胜率</th><th>样本/非重叠</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -384,16 +451,30 @@ tbody tr:hover {
     </div>
 
     <div class="card">
-      <h3>轮动净值曲线<span class="hint">每周按榜单调仓的模拟表现（含手续费，用板块指数近似代替 ETF）；点击图例可隐藏/显示</span></h3>
+      <h3>轮动净值曲线<span class="hint">按榜单调仓的模拟表现（含手续费，频率见上方切换；用板块指数近似代替 ETF）；点击图例可隐藏/显示</span><button class="help-btn" data-help="help-nav" title="怎么读这张图">?</button></h3>
+      <div class="help-panel" id="help-nav">
+        <div class="row"><b>净值：</b>"1 块钱滚到现在变成多少钱"。1.2 ＝赚了 20%，0.8 ＝亏了 20%。</div>
+        <div class="row"><b>五条线：</b><i>红线</i>＝按所选频率追涨买前 N 名；<i>绿线</i>＝抄底买后 N 名；<i>黄线</i>＝避开前 N 名买其余全部（频率和 N 都见上方切换器）；<i>灰色虚线</i>＝大盘平均（全部板块等权）；<i>蓝色虚线</i>＝沪深300指数。</div>
+        <div class="row"><b>怎么读：</b>策略线在灰虚线<b>上方</b>＝跑赢大盘，下方＝跑输。线越陡＝赚得快；大幅往下掉的段落就是"回撤"（亏钱的时候），掉的越浅越好。</div>
+        <div class="row"><b>互动：</b>点击顶部图例可隐藏/显示某条线，方便两两对比。</div>
+      </div>
       <div id="chart-nav" class="chart"></div>
     </div>
 
     <div class="card">
-      <h3>绩效指标<span class="hint">最近回测窗口内，三种玩法 vs 等权基准</span></h3>
+      <h3>绩效指标<span class="hint">最近回测窗口内，三种玩法 vs 等权基准</span><button class="help-btn" data-help="help-perf" title="每一列是什么意思">?</button></h3>
+      <div class="help-panel" id="help-perf">
+        <div class="row"><b>累计收益：</b>当前回测窗口内实际涨跌，短样本优先看它。</div>
+        <div class="row"><b>年化收益：</b>把这段日子的收益换算成"一年赚多少 %"；样本不足半年不显示，避免被几天波动夸大。</div>
+        <div class="row"><b>夏普比率：</b>"赚钱稳不稳"的评分。同样年化下夏普越高＝过程越平稳。粗略参考：> 1 不错，> 2 很好，负数＝白忙活。</div>
+        <div class="row"><b>最大回撤：</b>历史上从最高点到最低点<b>最惨亏多少</b>。-30% 意味着账户中途一度缩水三成——这个数字决定你能不能拿得住，非常重要。</div>
+        <div class="row"><b>期末净值：</b>1 块钱最后变成多少（1.2 ＝ +20%）。</div>
+        <div class="row"><b>换仓成本损耗：</b>每周调仓的手续费累计吃掉的收益，越高说明"折腾"越多。</div>
+      </div>
       <div class="table-wrap">
         <table id="perf-table">
           <thead><tr>
-            <th class="l">策略</th><th>年化收益</th><th>夏普</th>
+            <th class="l">策略</th><th>累计收益</th><th>年化收益</th><th>夏普</th>
             <th>最大回撤</th><th>期末净值</th><th>换仓成本损耗</th>
           </tr></thead>
           <tbody></tbody>
@@ -415,30 +496,51 @@ tbody tr:hover {
         <span class="board-title" id="board-title">--</span>
         <span id="board-badges"></span>
         <span class="board-sub" id="board-sub"></span>
+        <button class="help-btn" data-help="help-board-head" title="怎么看这一页">?</button>
+      </div>
+      <div class="help-panel" id="help-board-head">
+        <div class="row"><b>这一页看什么：</b>选定一个板块后，先看它<b>有没有对应的 ETF</b>（金色卡片）——有 ETF 才能方便地"一键买整个板块"。</div>
+        <div class="row"><b>没有 ETF 怎么办：</b>系统会给出<b>龙头股</b>作为替代参考——流动性龙头＝最近成交最活跃的股票（买卖进出方便）；情绪龙头＝最近涨停连板最多的股票（人气最旺，但波动和风险也最大，仅供参考）。</div>
+        <div class="row"><b>时序分位：</b>板块当前情绪在它自身近期历史中的位置（0~100%），> 90% 偏亢奋、< 10% 偏冰点。</div>
       </div>
       <div class="etf-cards" id="board-etfs"></div>
       <div class="leaders-wrap" id="board-leaders"></div>
     </div>
 
     <div class="card">
-      <h3>情绪分 vs 板块指数<span class="hint">近 120 天；情绪分（左轴）领先于价格时最有参考价值</span></h3>
+      <h3>情绪分 vs 板块指数<span class="hint">近 120 天；情绪分（左轴）领先于价格时最有参考价值</span><button class="help-btn" data-help="help-board-dual" title="怎么读这张图">?</button></h3>
+      <div class="help-panel" id="help-board-dual">
+        <div class="row"><b>两条线：</b>情绪分（左轴）＝系统给这个板块的"人气打分"；板块指数（右轴）＝板块真实价格走势。</div>
+        <div class="row"><b>怎么读：</b>分数和价格一起走高 ＝ 健康上涨；<b>分数先行回落、价格还在高位 ＝ 可能的见顶信号</b>（分数往往比价格早一步变脸）；分数在低位企稳而价格还在跌 ＝ 可能的抄底观察区。</div>
+        <div class="row"><b>一句话：</b>把情绪分当作"水温计"，价格当作"水面"——水温先变，水面后动。</div>
+      </div>
       <div id="chart-board-dual" class="chart"></div>
     </div>
 
     <div class="card">
-      <h3>时序分位<span class="hint">情绪分在自身历史中的位置；高于 90% 偏亢奋，低于 10% 偏冰点</span></h3>
+      <h3>时序分位<span class="hint">情绪分在自身历史中的位置；高于 90% 偏亢奋，低于 10% 偏冰点</span><button class="help-btn" data-help="help-board-pct" title="怎么读这张图">?</button></h3>
+      <div class="help-panel" id="help-board-pct">
+        <div class="row"><b>这是什么：</b>当前情绪分在该板块<b>自身近 120 天历史</b>里的位置（0~100%）。跟自己比，不跟别人比——有些板块天生火热、有些天生冷淡，只有和自己历史比才有意义。</div>
+        <div class="row"><b>怎么读：</b>> 90% ＝亢奋区，追高风险大；< 10% ＝冰点区，若风格判定为反转市可关注补涨；50% 附近＝不冷不热，没有特别信号。</div>
+        <div class="row"><b>注意：</b>分位高 ≠ 一定会跌，只是"已经很热"；分位低 ≠ 一定会涨，只是"已经冷透"。要结合顶栏的风格判定一起用。</div>
+      </div>
       <div id="chart-board-pct" class="chart"></div>
     </div>
 
-    <h3 style="margin: 4px 0 12px">最新因子体检<span class="hint" style="color:var(--text-faint);font-size:12px;font-weight:400">构成情绪分的 6 个原材料（<span id="factor-date"></span>）</span></h3>
-    <div class="grid" id="factor-cards" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))"></div>
+    <h3 style="margin: 4px 0 12px">最新因子体检<span class="hint" style="color:var(--text-faint);font-size:12px;font-weight:400">构成情绪分的 6 个原材料（<span id="factor-date"></span>）</span><button class="help-btn" data-help="help-factors" title="怎么读这些卡片">?</button></h3>
+    <div class="help-panel" id="help-factors">
+      <div class="row"><b>这 6 张卡片是什么：</b>情绪分不是拍脑袋算的，是由这 6 个"原料"合成的。每张卡片的大数字是原料的当前读数，下面一行是它在<b>全部板块中的相对位置</b>（排名越靠前，说明该板块在这个原料上越突出）。</div>
+      <div class="row"><b>怎么用：</b>当一个板块情绪分很高时，来这里看是哪个原料贡献的——比如"涨停强度"和"赚钱效应"双高，说明是真实资金行为驱动的热；如果只有"相对强度"高、其他平平，可能只是慢涨补涨，热度没那么实在。</div>
+      <div class="row"><b>六个原料一句话版：</b>涨停强度＝板块里涨停股的比例；赚钱效应＝昨天买涨停股的人今天赚没赚到钱；涨跌宽度＝涨的股票比跌的多多少；相对强度＝近 20 天涨幅在全部板块里的位置；热度变化＝成交额占全市场的比例变化；晋级率＝昨天涨停的股今天继续涨停的比例。</div>
+    </div>
+    <div class="grid" id="factor-cards" style="grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr))"></div>
   </section>
 
 </main>
 
 <div id="toast-wrap"></div>
 
-<script src="/vendor/echarts.min.js"></script>
-<script src="/app.js"></script>
+<script src="/vendor/echarts.min.js?v=1785514882"></script>
+<script src="/app.js?v=1787270000"></script>
 </body>
 </html>

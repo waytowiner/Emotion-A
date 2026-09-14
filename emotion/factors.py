@@ -16,6 +16,10 @@ import numpy as np
 import pandas as pd
 
 SEAL_TOL = 0.002  # 封板容忍：收盘距最高价 0.2% 以内视为封板
+FACTOR_NAMES = (
+    "limit_up_strength", "money_effect", "breadth", "rps",
+    "turnover_heat", "promotion_rate",
+)
 
 
 def limit_threshold(code: str, name: str = "", *, is_st: bool | None = None) -> float:
@@ -70,7 +74,11 @@ def flag_limit_up(stock_daily: pd.DataFrame) -> pd.DataFrame:
 
 
 def _with_board(df: pd.DataFrame, board_map: pd.DataFrame) -> pd.DataFrame:
-    m = board_map[["code", "board_code"]].drop_duplicates("code")
+    # 一股多板：东财行业口径下个股同时属于一/二/三级板块（如某芯片股同属
+    # 电子、半导体、数字芯片设计）。只按 (code, board_code) 对去重，不按 code
+    # 去重——否则每只股票只剩行序最靠前的一个板块，三级细分板块会整板缺失
+    # （曾导致 35 个细分板块无任何个股因子、情绪分全 NaN）。
+    m = board_map[["code", "board_code"]].drop_duplicates()
     return df.merge(m, on="code", how="inner")
 
 

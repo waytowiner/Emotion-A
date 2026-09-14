@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from emotion import backtest, leaders, pipeline, score, signal
+from emotion.data import quotes
 from emotion.factors import compute_all_factors
 
 OUT_DIR = ROOT / "data" / "dashboard"
@@ -62,12 +63,13 @@ def nav_records(s: pd.Series) -> list[dict]:
 
 
 def rotation_payload(rot: dict) -> dict:
+    # 等权基准净值与方向/持仓数/频率无关，已提升到窗口层 benchmark_nav，不重复存
     return {
         "nav": nav_records(rot["nav"]),
-        "benchmark_nav": nav_records(rot["benchmark_nav"]),
         "strategy": rot["strategy"],
         "benchmark": rot["benchmark"],
         "total_cost_drag": rot["total_cost_drag"],
+        "total_turnover": rot.get("total_turnover"),
         "final_nav": rot["final_nav"],
         "final_benchmark": rot["final_benchmark"],
     }
@@ -134,13 +136,71 @@ def ensure_offline_fallback() -> None:
     quotes_mod.get_board_kline = _cache_only
     print("    [offline] 东财行情接口不可达，板块 K 线使用本地缓存")
 
+    # board_source=etf 口径走另一组抓取函数（中证指数，缓存键 board_kline_etf_*/
+    # board_cons_etf_*），不在上面的补丁范围内；离线时同样降级为纯缓存，
+    # 否则每个板块串行重试会把 prepare 挂住十几分钟，且抓抛异常时连缓存也不用。
+    try:
+        from emotion.data import boards_etf as _boards_etf
+
+        def _cache_only_etf_kline(cache_dir, board_code, start, end, **kwargs):
+            cached = _cache.load(cache_dir, f"board_kline_etf_{board_code}")
+            if cached is None or cached.empty:
+                raise RuntimeError(f"接口不可达且无缓存：{board_code}")
+            return cached
+
+        def _cache_only_etf_cons(cache_dir, board_code, **kwargs):
+            cached = _cache.load(cache_dir, f"board_cons_etf_{board_code}")
+            if cached is None or cached.empty:
+                raise RuntimeError(f"接口不可达且无缓存：{board_code}")
+            return cached
+
+        _boards_etf.get_board_kline_etf = _cache_only_etf_kline
+        _boards_etf.get_board_cons_etf = _cache_only_etf_cons
+        print("    [offline] ETF 板块口径同步降级：成分/指数 K 线使用本地缓存")
+    except ImportError:
+        pass
+
 
 def load_etf_info(board_names: dict) -> dict[str, list[dict] | None]:
-    """读取 config/etf_map.yaml + etf_list 行情，生成 board_code -> ETF 列表（或 None）。
+    """生成 board_code -> ETF 列表（或 None），ETF 条目附带最新行情。
 
-    ETF 条目附带最新价/涨跌幅/成交额（若 etf_list 缓存存在）。
+    两个映射来源：
+    - board_source=etf：data/cache/etf_trading_map.parquet（指数→规模最大 ETF，
+      build_etf_trading_map.py 生成），board_code 即指数代码，直接匹配；
+    - 其他口径：config/etf_map.yaml（板块→ETF 模糊映射）。
     任一输入缺失时返回空 dict（看板降级为不显示 ETF 列）。
     """
+    quotes = {}
+    quote_path = ROOT / "data" / "cache" / "etf_list.parquet"
+    if quote_path.exists():
+        q = pd.read_parquet(quote_path)
+        q["code"] = q["code"].astype(str).str.zfill(6)
+        quotes = {r.code: r for r in q.itertuples()}
+
+    def _enrich(ec: str, name: str) -> dict:
+        item = {"code": str(ec).zfill(6), "name": name}
+        r = quotes.get(str(ec).zfill(6))
+        if r is not None:
+            item.update({
+                "price": None if pd.isna(r.price) else float(r.price),
+                "pct_chg": None if pd.isna(r.pct_chg) else float(r.pct_chg),
+                "amount": None if pd.isna(r.amount) else float(r.amount),
+            })
+        return item
+
+    tmap_path = ROOT / "data" / "cache" / "etf_trading_map.parquet"
+    if tmap_path.exists():
+        tm = pd.read_parquet(tmap_path)
+        tm["board_code"] = tm["board_code"].astype(str)
+        if len(set(tm["board_code"]) & {str(c) for c in board_names}) > 0:
+            out: dict[str, list[dict] | None] = {str(c): None for c in board_names}
+            for _, r in tm.iterrows():
+                if r["board_code"] in out:
+                    out[r["board_code"]] = [_enrich(r["etf_code"], r["etf_name"])]
+            n = sum(1 for v in out.values() if v)
+            print(f"    [etf] 交易映射：{n}/{len(out)} 个板块挂接 ETF（规模最大者）")
+            return out
+
     map_path = ROOT / "config" / "etf_map.yaml"
     if not map_path.exists():
         print("    [etf] config/etf_map.yaml 不存在，跳过 ETF 信息")
@@ -148,36 +208,19 @@ def load_etf_info(board_names: dict) -> dict[str, list[dict] | None]:
     import yaml
     with open(map_path, encoding="utf-8") as f:
         mapping = yaml.safe_load(f)
-    quotes = {}
-    quote_path = ROOT / "data" / "cache" / "etf_list.parquet"
-    if quote_path.exists():
-        q = pd.read_parquet(quote_path)
-        q["code"] = q["code"].astype(str).str.zfill(6)
-        quotes = {r.code: r for r in q.itertuples()}
-    else:
-        print("    [etf] etf_list.parquet 不存在，ETF 无行情数据")
-    out: dict[str, list[dict] | None] = {}
+    out = {str(code): None for code in board_names}
     for code, entry in mapping.items():
         code = str(code)  # yaml 会把纯数字代码（如同花顺 881273）解析成 int
+        if code not in out:
+            continue  # 映射文件可能来自另一板块源，不能污染当前看板
         etfs = entry.get("etf") if isinstance(entry, dict) else None
         if not etfs:
             out[code] = None
             continue
-        items = []
-        for e in etfs:
-            ec = str(e["code"]).zfill(6)
-            item = {"code": ec, "name": e["name"]}
-            r = quotes.get(ec)
-            if r is not None:
-                item.update({
-                    "price": None if pd.isna(r.price) else float(r.price),
-                    "pct_chg": None if pd.isna(r.pct_chg) else float(r.pct_chg),
-                    "amount": None if pd.isna(r.amount) else float(r.amount),
-                })
-            items.append(item)
+        items = [_enrich(e["code"], e["name"]) for e in etfs]
         out[code] = items
     n = sum(1 for v in out.values() if v)
-    print(f"    [etf] {n}/{len(mapping)} 个板块挂接 ETF")
+    print(f"    [etf] {n}/{len(out)} 个入选板块挂接 ETF")
     return out
 
 
@@ -195,11 +238,13 @@ def main() -> None:
     factors = compute_all_factors(data["stock_daily"], data["board_map"],
                                   data["board_kline"],
                                   market_total=data.get("market_total"))
+    flow_proxy = signal.compute_board_flow_proxy(data["stock_daily"], data["board_map"])
 
     print("[3/6] 合成情绪分 ...")
     _, smoothed, pct = score.build_scores(
         factors, cfg["weights"], cfg.get("smooth_window", 5),
-        lookback=cfg.get("score_lookback", 120))
+        lookback=cfg.get("score_lookback", 120),
+        z_clip=cfg.get("score_z_clip", 3.0))
 
     board_close = data["board_kline"].pivot(
         index="date", columns="board_code", values="close").sort_index()
@@ -215,7 +260,9 @@ def main() -> None:
         smoothed, pct,
         consecutive_days=sig_cfg.get("consecutive_days", 3),
         hot_quantile=sig_cfg.get("hot_quantile", 0.9),
-        cold_quantile=sig_cfg.get("cold_quantile", 0.1))
+        cold_quantile=sig_cfg.get("cold_quantile", 0.1),
+        factors=factors, flow_proxy=flow_proxy,
+        breakthrough_cfg=sig_cfg.get("breakthrough"))
 
     latest_date = smoothed.index[-1]
     last_score = smoothed.iloc[-1].dropna().sort_values(ascending=False)
@@ -233,8 +280,28 @@ def main() -> None:
     ranked = rank_list(last_score)
     health = backtest.recent_signal_health(smoothed, board_close, days=HEALTH_DAYS)
 
+    # 风格判定（regime 自适应）：滚动已实现 IC + 回撤护栏 -> 方向建议
+    regime_cfg = cfg.get("regime", {})
+    regime = backtest.regime_state(
+        smoothed, board_close,
+        ic_window=regime_cfg.get("ic_window", 15),
+        threshold=regime_cfg.get("threshold", 0.02),
+        horizon=regime_cfg.get("horizon", 5),
+        min_obs=regime_cfg.get("min_obs", 10),
+        guard_days=regime_cfg.get("guard_days", 10),
+        guard_threshold=regime_cfg.get("guard_threshold", -0.03),
+        vol_window=regime_cfg.get("vol_window", 20),
+        vol_threshold=regime_cfg.get("vol_threshold"),
+        require_robust_signal=regime_cfg.get("require_robust_signal", False),
+        robust_ic_window=regime_cfg.get("robust_ic_window", 60),
+        robust_bootstrap_samples=regime_cfg.get("robust_bootstrap_samples", 500),
+        mono_days=regime_cfg.get("mono_days"),
+    )
+    regime["mono_days"] = regime_cfg.get("mono_days")
+
     signals_named = {}
-    for key in ["heating", "cooling", "hot", "cold"]:
+    for key in ["heating", "cooling", "hot", "cold", "bottom_reversal",
+                "extreme_hot", "extreme_cold", "fund_emotion_divergence"]:
         signals_named[key] = [{"code": c, "name": board_names.get(c, c),
                                "etf": etf_map.get(c)}
                               for c in signals[key]]
@@ -248,7 +315,9 @@ def main() -> None:
         "date": latest_date,
         "board_source": cfg.get("board_source", "eastmoney"),
         "n_boards": int(smoothed.shape[1]),
+        "universe": data.get("universe"),
         "health": health,
+        "regime": regime,
         "signals": signals_named,
         "top": ranked[:15],
         "bottom": ranked[-15:][::-1],
@@ -257,30 +326,76 @@ def main() -> None:
         "leaders": leaders_map,
     })
 
-    print("[5/6] 回测（最近窗口）...")
-    window = int(cfg.get("backtest_window") or BACKTEST_WINDOW_FALLBACK)
-    bt_score = smoothed.tail(window)
-    bt_close = board_close.loc[bt_score.index[0]:]
+    print("[5/6] 回测（多窗口）...")
+    windows = cfg.get("backtest_windows")
+    if not windows:
+        windows = [int(cfg.get("backtest_window") or BACKTEST_WINDOW_FALLBACK)]
+    windows = [int(w) for w in windows]
     bt_cfg = cfg["backtest"]
-    ic_df = backtest.ic_analysis(bt_score, bt_close, bt_cfg["forward_days"])
-    quant_df = backtest.quantile_test(bt_score, bt_close,
-                                      horizon=bt_cfg["forward_days"][0])
     top_n = sig_cfg.get("top_n", 3)
+    top_n_list = sorted({1, 3, 5, 10, top_n})
     cost_bps = bt_cfg.get("cost_bps", 5)
-    rotations = {
-        d: backtest.rotation_backtest(bt_score, bt_close, top_n=top_n,
-                                      cost_bps=cost_bps, direction=d)
-        for d in ["top", "bottom", "avoid_top"]
-    }
+
+    # 大盘参考：沪深300 收盘价（baostock；失败则降级为净值图不显示指数线）
+    index_close = None
+    try:
+        idx_k = quotes.get_index_kline(
+            ROOT / cfg["paths"]["cache_dir"], "sh.000300",
+            str(board_close.index[0])[:10], str(board_close.index[-1])[:10])
+        if not idx_k.empty:
+            index_close = idx_k.set_index("date")["close"].sort_index()
+            print(f"    [index] 沪深300 {len(idx_k)} 行，"
+                  f"最新 {str(idx_k['date'].max())[:10]}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"    [index] 沪深300 获取失败：{exc}（净值图降级为无指数参考线）")
+
+    def run_window(w: int) -> dict:
+        bt_score = smoothed.tail(w)
+        bt_close = board_close.loc[bt_score.index[0]:]
+        ic_df = backtest.ic_analysis(bt_score, bt_close, bt_cfg["forward_days"])
+        quant_df = backtest.quantile_test(bt_score, bt_close,
+                                          horizon=bt_cfg["forward_days"][0])
+        # 频率 × 持仓数 × 方向 全组合（周频是默认口径；日频对照换手成本的代价）。
+        # 等权基准净值与频率/持仓数/方向都无关，只在窗口层存一份。
+        rotation = {}
+        benchmark_nav = None
+        for freq_key, freq in [("W", "W-FRI"), ("D", "D")]:
+            by_n = {}
+            for n in top_n_list:
+                by_n[str(n)] = {}
+                for d in ["top", "bottom", "avoid_top"]:
+                    r = backtest.rotation_backtest(
+                        bt_score, bt_close, top_n=n, cost_bps=cost_bps,
+                        freq=freq, direction=d)
+                    if benchmark_nav is None:
+                        benchmark_nav = nav_records(r["benchmark_nav"])
+                    by_n[str(n)][d] = rotation_payload(r)
+            rotation[freq_key] = by_n
+        payload = {
+            "window": w,
+            "start": bt_score.index[0],
+            "end": bt_score.index[-1],
+            "top_n": top_n,
+            "top_n_list": top_n_list,
+            "cost_bps": cost_bps,
+            "ic": df_records(ic_df),
+            "quantile": df_records(quant_df),
+            "benchmark_nav": benchmark_nav,
+            "rotation": rotation,
+        }
+        # 沪深300 参考净值：与窗口交易日对齐、归一到期初为 1
+        if index_close is not None:
+            s = index_close.reindex(bt_close.index).ffill().dropna()
+            if len(s) > 1:
+                payload["index300_nav"] = nav_records(s / s.iloc[0])
+        return payload
+
+    bt_by_window = {str(w): run_window(w) for w in windows}
+    # 顶层保留首个窗口的字段（兼容旧前端），windows 携带全部档位
     dump_json("backtest.json", {
-        "window": window,
-        "start": bt_score.index[0],
-        "end": bt_score.index[-1],
-        "top_n": top_n,
-        "cost_bps": cost_bps,
-        "ic": df_records(ic_df),
-        "quantile": df_records(quant_df),
-        "rotation": {d: rotation_payload(r) for d, r in rotations.items()},
+        **bt_by_window[str(windows[0])],
+        "window_list": windows,
+        "windows": bt_by_window,
     })
 
     print("[6/6] 导出矩阵 / 因子快照 / 健康度序列 ...")
@@ -334,7 +449,9 @@ def main() -> None:
         "score_start": smoothed.index[0],
         "score_end": smoothed.index[-1],
         "n_boards": int(smoothed.shape[1]),
-        "backtest_window": window,
+        "universe": data.get("universe"),
+        "backtest_window": windows[0],
+        "backtest_windows": windows,
         "score_lookback": cfg.get("score_lookback", 120),
     })
 

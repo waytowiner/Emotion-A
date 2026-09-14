@@ -1,7 +1,4 @@
-"""情绪分合成层：因子 z-score -> 加权合成 -> 平滑。
-
-fund_flow 等可选因子缺失时，权重自动在可用因子间归一化。
-"""
+"""情绪分合成层：因子 z-score -> 加权合成 -> 平滑。"""
 
 from __future__ import annotations
 
@@ -18,12 +15,17 @@ def zscore_cross_section(factor: pd.DataFrame) -> pd.DataFrame:
 
 def combine_factors(factors: dict[str, pd.DataFrame],
                     weights: dict[str, float],
-                    min_coverage: float = 0.5) -> pd.DataFrame:
+                    min_coverage: float = 0.5,
+                    z_clip: float | None = 3.0) -> pd.DataFrame:
     """加权合成情绪分（原始日度）。
 
     逐单元格计算：只聚合该日期-板块上实际存在的因子（按权重归一），
     可用因子占比低于 min_coverage 的单元格不予评分。稀疏因子
     （如赚钱效应、晋级率）不会拖垮整行。
+
+    z_clip：单因子横截面 z 的 winsorize 上限（对称 ±z_clip）。等权合成下
+    一个极端因子（如 turnover_heat 出现 -4.7σ）会把综合分整体绑架到反向，
+    截断后单因子最多贡献 ±z_clip。None 表示不截断。
     """
     available = {k: v for k, v in factors.items() if v is not None and not v.empty}
     if not available:
@@ -33,6 +35,8 @@ def combine_factors(factors: dict[str, pd.DataFrame],
         raise ValueError("sum of weights must be positive")
 
     zscores = {k: zscore_cross_section(v) for k, v in available.items()}
+    if z_clip is not None and z_clip > 0:
+        zscores = {k: z.clip(-z_clip, z_clip) for k, z in zscores.items()}
     # 对齐到统一索引/列
     idx = sorted(set().union(*[z.index for z in zscores.values()]))
     cols = sorted(set().union(*[z.columns for z in zscores.values()]))
@@ -65,14 +69,16 @@ def percentile_rank(score: pd.DataFrame, lookback: int = 250) -> pd.DataFrame:
 
 def build_scores(factors: dict[str, pd.DataFrame], weights: dict[str, float],
                  smooth_window: int = 5,
-                 lookback: int = 250) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+                 lookback: int = 250,
+                 z_clip: float | None = 3.0) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """返回 (日度原始分, 周度平滑分, 平滑分时序分位)。
 
     平滑分只保留原始分实际存在的日期——避免某数据源多出一个
     交易日（如盘中未收盘的板块指数）导致报告日期虚标。
     lookback 为时序分位窗口，随市场 regime 缩短（如 120 天）。
+    z_clip 透传给 combine_factors（单因子 z 的 winsorize 上限）。
     """
-    raw = combine_factors(factors, weights)
+    raw = combine_factors(factors, weights, z_clip=z_clip)
     smoothed = smooth_score(raw, smooth_window)
     smoothed = smoothed.loc[raw.dropna(how="all").index]
     pct = percentile_rank(smoothed, lookback=lookback)

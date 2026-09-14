@@ -75,7 +75,12 @@ def run_one(cfg: dict, source: str, window: int,
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--window", type=int, default=180, help="回测交易日数")
+    ap.add_argument("--sources", default="ths,eastmoney",
+                    help="逗号分隔的口径列表，如 eastmoney,sw,etf")
+    ap.add_argument("--end", default=None,
+                    help="统一截断日（如 2026-08-25）；缺省用缓存最大日期")
     args = ap.parse_args()
+    sources = [s.strip() for s in args.sources.split(",") if s.strip()]
 
     cfg = pipeline.load_config()
     # 板块/个股缓存截止日：避免触发 curl_cffi 增量网络请求导致进程崩溃
@@ -88,13 +93,13 @@ def main() -> None:
             last_dates.append(pd.read_parquet(f)["date"].max())
         except Exception:
             continue
-    end_override = None
-    if last_dates:
+    end_override = args.end
+    if end_override is None and last_dates:
         end_override = max(last_dates).strftime("%Y-%m-%d")
-        print(f"[info] 用缓存截止日 {end_override} 运行（避免增量网络抓取）")
+    print(f"[info] 统一截断日 {end_override}（避免增量网络抓取）")
 
     results = []
-    for source in ("ths", "eastmoney"):
+    for source in sources:
         try:
             results.append(run_one(cfg, source, args.window, end_override))
         except Exception as exc:
@@ -106,18 +111,19 @@ def main() -> None:
     print(df.to_string(index=False))
 
     valid = [r for r in results if "error" not in r]
-    if len(valid) == 2:
-        ths, em = valid[0], valid[1]
+    if len(valid) >= 2:
         print("\n结论：")
-        if em["ic"] >= 0.03 and ths["ic"] < 0.03:
-            print("→ 东财口径有效，THS 口径无效。建议切回东财口径使用。")
-        elif ths["ic"] >= 0.03 and em["ic"] < 0.03:
-            print("→ THS 口径反而更好，继续使用 THS。")
-        elif em["ic"] >= 0.03 and ths["ic"] >= 0.03:
-            print("→ 两个口径都有效，优先用 IC 更高的。")
+        for r in valid:
+            tag = "有效" if r["ic"] >= 0.03 else "无效"
+            print(f"  {r['source']}: IC={r['ic']:.3f}（{tag}）"
+                  f" IC-IR={r['ic_ir']:.3f} 年化={r['ann_return']:+.1%}"
+                  f" 夏普={r['sharpe']:.2f}")
+        best = max(valid, key=lambda r: r["ic"])
+        if best["ic"] >= 0.03:
+            print(f"→ 建议用 IC 最高的口径：{best['source']}")
         else:
-            print("→ 两个口径 IC 都低于 0.03，策略 alpha 可能已衰减。")
-            print("  建议降级为情绪观察工具，不再用于交易决策。")
+            print("→ 所有口径 IC 都低于 0.03，策略 alpha 可能已衰减，"
+                  "建议降级为情绪观察工具。")
 
     out = ROOT / "report" / f"board_source_compare_{pd.Timestamp.today():%Y%m%d}.csv"
     out.parent.mkdir(parents=True, exist_ok=True)

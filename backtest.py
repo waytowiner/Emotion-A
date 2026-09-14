@@ -27,42 +27,44 @@ def main() -> None:
     print("[3/4] 合成情绪分 ...")
     _, smoothed, _ = score.build_scores(
         factors, cfg["weights"], cfg.get("smooth_window", 5),
-        lookback=cfg.get("score_lookback", 250))
+        lookback=cfg.get("score_lookback", 250),
+        z_clip=cfg.get("score_z_clip", 3.0))
 
-    # 回测窗口：默认最近 N 个交易日（适应当前市场风格）
-    window = cfg.get("backtest_window")
-    if window:
-        smoothed = smoothed.tail(int(window))
+    # 回测窗口：多档验证（backtest_windows），兼容旧的单档 backtest_window
+    windows = cfg.get("backtest_windows")
+    if not windows:
+        single = cfg.get("backtest_window")
+        windows = [int(single)] if single else [None]
+    windows = [int(w) if w else None for w in windows]
 
-    print("[4/4] 回测 ...")
+    print(f"[4/4] 回测（窗口：{['全部' if w is None else w for w in windows]}）...")
     board_close = data["board_kline"].pivot(
         index="date", columns="board_code", values="close").sort_index()
-    if window:
-        board_close = board_close.loc[smoothed.index[0]:]
     bt_cfg = cfg["backtest"]
-    ic_df = backtest.ic_analysis(smoothed, board_close, bt_cfg["forward_days"])
-    quant_df = backtest.quantile_test(smoothed, board_close,
-                                      horizon=bt_cfg["forward_days"][0])
-    rot_top = backtest.rotation_backtest(
-        smoothed, board_close,
-        top_n=cfg["signal"].get("top_n", 3),
-        cost_bps=bt_cfg.get("cost_bps", 5),
-        direction="top",
-    )
-    rot_bottom = backtest.rotation_backtest(
-        smoothed, board_close,
-        top_n=cfg["signal"].get("top_n", 3),
-        cost_bps=bt_cfg.get("cost_bps", 5),
-        direction="bottom",
-    )
-    rot_avoid = backtest.rotation_backtest(
-        smoothed, board_close,
-        top_n=cfg["signal"].get("top_n", 3),
-        cost_bps=bt_cfg.get("cost_bps", 5),
-        direction="avoid_top",
-    )
-    md = backtest.format_backtest_report(ic_df, quant_df, rot_top, rot_bottom,
-                                         rot_avoid)
+    top_n = cfg["signal"].get("top_n", 3)
+    cost_bps = bt_cfg.get("cost_bps", 5)
+    results = {}
+    for w in windows:
+        sm = smoothed.tail(w) if w else smoothed
+        bc = board_close.loc[sm.index[0]:] if w else board_close
+        results[w] = {
+            "ic": backtest.ic_analysis(sm, bc, bt_cfg["forward_days"]),
+            "quant": backtest.quantile_test(sm, bc,
+                                            horizon=bt_cfg["forward_days"][0]),
+            "top": backtest.rotation_backtest(
+                sm, bc, top_n=top_n, cost_bps=cost_bps, direction="top"),
+            "bottom": backtest.rotation_backtest(
+                sm, bc, top_n=top_n, cost_bps=cost_bps, direction="bottom"),
+            "avoid": backtest.rotation_backtest(
+                sm, bc, top_n=top_n, cost_bps=cost_bps, direction="avoid_top"),
+        }
+    if len(results) == 1:
+        (w, res), = results.items()
+        md = backtest.format_backtest_report(
+            res["ic"], res["quant"], res["top"], res["bottom"], res["avoid"],
+            window_days=w)
+    else:
+        md = backtest.format_multi_window_report(results, bt_cfg["forward_days"])
 
     out_dir = ROOT / cfg["paths"]["report_dir"]
     out_dir.mkdir(parents=True, exist_ok=True)

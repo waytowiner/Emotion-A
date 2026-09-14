@@ -36,7 +36,8 @@ def liquidity_leaders(stock_daily: pd.DataFrame, board_map: pd.DataFrame,
     dates = _last_dates(stock_daily, window)
     d = stock_daily[stock_daily["date"].isin(dates)]
     d = d[d["trade_status"].astype(str) == "1"]  # 剔除停牌
-    m = board_map[["code", "board_code"]].drop_duplicates("code")
+    # 一股多板：只按 (code, board_code) 对去重，细分板块也能有自己的龙头股
+    m = board_map[["code", "board_code"]].drop_duplicates()
     d = d.merge(m, on="code", how="inner")
     d["amount"] = pd.to_numeric(d["amount"], errors="coerce")
     g = d.groupby(["board_code", "code"])["amount"].mean().dropna().reset_index()
@@ -74,7 +75,8 @@ def momentum_leaders(stock_daily: pd.DataFrame, board_map: pd.DataFrame,
     """
     dates = _last_dates(stock_daily, window)
     flagged = flag_limit_up(stock_daily[stock_daily["date"].isin(dates)].copy())
-    m = board_map[["code", "board_code"]].drop_duplicates("code")
+    # 一股多板：只按 (code, board_code) 对去重，细分板块也能有自己的龙头股
+    m = board_map[["code", "board_code"]].drop_duplicates()
     flagged = flagged.merge(m, on="code", how="inner")
 
     rows = []
