@@ -1,7 +1,12 @@
 # Emotion-A：A 股板块情绪量化观察系统
 
+[![License: Non-Commercial](https://img.shields.io/badge/License-Non--Commercial-red.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/waytowiner/Emotion-A.svg?style=social)](https://github.com/waytowiner/Emotion-A)
+
 > **客观呈现全市场板块冷热、情绪分排名与微观体感。**
 > 全部纯计算、无黑盒、数字严格可复现；在经历严格的实盘 ETF 回测与摩擦成本归因后，确立为纯粹的**盘面情绪观察工具**。
+> 
+> ⚠️ **开源与商用声明**：本项目遵循 [非商业开源许可协议](LICENSE)，源码公开仅供个人学习与学术研究。**未经原作者书面正式授权，严禁任何形式的商业化用途（包括商业软件集成、付费投顾/研报变现、资管实盘等）**。
 
 ![Web 看板界面](docs/images/observation_dashboard.png)
 
@@ -115,6 +120,18 @@ python scripts/dump_dashboard_data.py
 python server.py
 # 浏览器访问：http://127.0.0.1:8000
 ```
+
+---
+
+## 开源协议与商用授权声明 (License & Commercial Terms)
+
+本项目采用 **[非商业开源许可协议 (Non-Commercial Open License)](LICENSE)** 发布：
+
+- **个人与学术免费**：允许任何个人、高校及研究人员免费阅读、学习、研究、修改代码及本地自用；
+- **禁止未经授权的商业用途**：**严禁任何组织、机构、企业或个人未经原作者书面正式授权，将本项目的全部或部分代码、算法模型、因子体系、看板界面或衍生方案用于任何直接或间接的商业用途**（包括但不限于商业金融终端集成、SaaS服务、付费投顾社群/付费研报变现、私募/自营资金实盘运营、商业培训与技术转让等）；
+- **商业授权与合作洽谈**：如需商业授权或业务合作，请事先联系原作者：
+  - **GitHub**：[@waytowiner](https://github.com/waytowiner)
+  - **Email**：[enixzhang@gmail.com](mailto:enixzhang@gmail.com)
 
 ---
 

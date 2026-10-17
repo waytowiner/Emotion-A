@@ -1,0 +1,45 @@
+# 非商业开源许可协议 (Non-Commercial Open License)
+
+版权所有 (c) 2026 waytowiner <enixzhang@gmail.com>  
+All rights reserved.
+
+本项目（包括所有源代码、算法模型、因子体系、文档及衍生内容）采用**非商业开源许可协议**（基于 CC BY-NC-SA 4.0 核心准则制定）：
+
+---
+
+### 一、 允许范围（个人与非商业用途）
+允许任何个人、高校及学术研究机构在**非商业目的**下免费：
+1. 阅读、下载、学习、研究和复现本项目的所有代码及因子算法；
+2. 在个人设备上本地部署、测试与自用；
+3. 基于个人研究目的进行代码修改与二次衍生，但衍生项目必须保持相同的非商业授权属性并保留原作者署名。
+
+---
+
+### 二、 严格限制（禁止未经授权的商业用途）
+**未经原作者事先明确的书面授权与许可，严禁任何组织、企业、机构或个人将本项目的全部或部分代码、算法模型、情绪因子、交易策略、数据管道、看板界面或衍生内容用于任何形式的直接或间接商业用途。**
+
+商业用途包括但不限于：
+1. **商业软件与服务集成**：将本项目集成到任何收费/商业化的金融终端、投研平台、SaaS 软件、小程序、API 或量化系统中；
+2. **收费投顾与社群变现**：利用本项目生成的榜单、信号、数据或分析结论，开展任何形式的付费星球、付费社群、会员订阅、付费研报或自媒体商业变现；
+3. **资产管理与实盘运营**：企业、私募机构或资管团队将本算法/策略用于商业自营或受托资金管理；
+4. **技术转让与收费培训**：将本项目内容打包用于收费培训课件、商业咨询或技术转让。
+
+---
+
+### 三、 商业授权与商务合作
+如需将本项目或其衍生方案用于任何商业场景，必须事先取得原作者的书面正式授权。  
+商务洽谈与授权联系方式：
+- **GitHub**: [@waytowiner](https://github.com/waytowiner)
+- **Email**: [enixzhang@gmail.com](mailto:enixzhang@gmail.com)
+
+---
+
+### 四、 免责声明 (Disclaimer)
+本软件按“原样 (AS IS)”提供，原作者不提供任何明示或暗示的担保。在任何情况下，原作者均不对因使用、参考或依赖本软件及其数据造成的任何直接、间接投资损失或交易后果承担法律责任。投资有风险，入市需谨慎。
+
+---
+
+### English Summary
+This software is provided for personal, academic, and non-commercial research purposes only. **Commercial use, redistribution, or integration into proprietary/commercial products or services without explicit written authorization or a commercial license from the author is strictly prohibited.**
+
+For commercial licensing and inquiries, please contact: `enixzhang@gmail.com`
