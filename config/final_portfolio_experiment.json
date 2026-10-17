@@ -1,0 +1,59 @@
+{
+  "experiment_id": "final_dedup_emotion_20261013",
+  "declared_on": "2026-10-13",
+  "source": "report/etf_adaptive_20261009",
+  "output": "report/final_portfolio_20261009",
+  "frozen_emotion_config_sha256": "a748d53ab55a509afdf35a30c4af2f06316dda8414958fd997579c99bd3bdded",
+  "scope": "Last fixed-rule diagnostic on previously observed history; not independent out-of-sample research. No parameter sweep, reverse-signal retry or winner selection.",
+  "pool": "Signal-day finite frozen emotion score, mapped ETF, positive close and volume. Alias scores averaged per ETF; all three primary accounts share this pool.",
+  "schedule": "First existing weekly signal in each calendar month; next A-share session open. No execution for final pending signal. Monthly frequency is the only turnover constraint; no hard turnover cap.",
+  "dedup": {
+    "lookback_returns": 60,
+    "minimum_pair_observations": 20,
+    "correlation_threshold": 0.9,
+    "method": "Greedy complete-link groups: sort ETF codes, seed with smallest unused code, admit remaining codes in ascending order only if correlation with every member is >= threshold. Missing correlations never create an edge. No forward-fill in return estimation. Groups are proxies, not proven independent sectors.",
+    "representative": "Highest mean within-group past correlation (medoid), tie by ETF code. Singletons represent themselves. Exactly the same representative in B and C, independent of emotion."
+  },
+  "emotion_overlay": {
+    "amplitude": 0.2,
+    "method": "Mean of frozen ETF emotion scores within each group; average ranks scaled to [-1,1]; group weight proportional to 1 + amplitude * scaled rank. Equal scores or one group imply no tilt. No IC direction switch, no threshold fitting."
+  },
+  "accounts": {
+    "A_monthly_equal": "Equal-weight unique eligible ETFs, monthly",
+    "B_dedup_equal": "Equal-weight correlation groups, one representative per group, monthly",
+    "C_dedup_emotion": "Same representatives as B with bounded emotion tilt, monthly",
+    "reference_weekly_equal": "Prior same-pool weekly equal-weight account; supplementary frequency control"
+  },
+  "costs": {
+    "gross": {"fee_bps": 0, "slippage_bps": 0},
+    "net": {"fee_bps": 5, "slippage_bps": 5},
+    "stress": {"fee_bps": 10, "slippage_bps": 10}
+  },
+  "inference": {
+    "bootstrap_block_sessions": 20,
+    "bootstrap_samples": 5000,
+    "bootstrap_seed": 20261013,
+    "confidence": 0.95,
+    "series": "Paired daily log-return difference C minus B, common first execution through final close, including initial entry costs; moving-block resampling. Descriptive interval on already observed history, not a corrected discovery p-value.",
+    "stability": "Non-overlapping monthly execution periods, excluding final right-censored period. Require at least 12 completed periods and >=2/3 strictly positive C-minus-B net period returns."
+  },
+  "exit_rule": {
+    "all_required": [
+      "C net cumulative return strictly exceeds B",
+      "C net cumulative return strictly exceeds A",
+      "C net maximum drawdown is no worse than B (numerical tolerance 1e-10)",
+      "95% moving-block interval lower bound of mean daily C-minus-B net log return is strictly positive",
+      "At least 12 completed monthly execution periods and >=2/3 strictly positive C-minus-B net periods",
+      "C stress-cost cumulative return strictly exceeds B stress-cost cumulative return"
+    ],
+    "on_any_failure": "observation_only: end this trading research route; preserve scoring, market observation and historical diagnostics, remove actionable trading interpretations from current reports/dashboard. Do not change emotion parameters or retry rules.",
+    "on_all_pass": "research_only: no live promotion; historical point-in-time constituents/mapping and future untouched evidence still required."
+  },
+  "limitations": [
+    "Current constituent and ETF mapping snapshots, not historical point-in-time reconstruction",
+    "Normalized adjusted units; no board lots, minimum commissions, capacity or limit-price queue simulation",
+    "No costless terminal liquidation; all accounts marked at final close",
+    "Correlation does not identify all common policy, sector or style risks",
+    "Rules fixed before this experiment's results, but the historical sample was already studied"
+  ]
+}

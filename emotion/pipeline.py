@@ -61,6 +61,9 @@ def validate_config(cfg: dict, *, path: Path | None = None) -> None:
 def cache_end_date(cfg: dict) -> str:
     """数据可用的最新完整交易日：板块K线与个股日线缓存截止日的较小者。
 
+    板块口径为"至少 95% 板块覆盖的最新日期"（0.05 分位向下取整），
+    单个长期失败的板块不会把整体口径拖回旧日期，部分板块限流滞后时
+    也不会虚标进度日。
     用于避免增量网络抓取（传输层可能进程级崩溃），也防止单一源的超前行
     （如中证接口凌晨预发的次日占位行）导致报告日期虚标。
     """
@@ -77,8 +80,12 @@ def cache_end_date(cfg: dict) -> str:
                 lasts.append(pd.to_datetime(d).max())
         except Exception:  # noqa: BLE001
             continue
-    # 板块池取"最新"（任一板块抓到即算），再与个股日线截止日取小
-    board_last = max(lasts) if lasts else None
+    # 板块池取"覆盖分位"口径：至少 95% 板块 K 线覆盖的最新日期（0.05 分位、
+    # 向下取实际日期）。此前用 max（任一板块抓到即算），限流中止日会把
+    # 大量缓存滞后的板块推入增量网络抓取（2026-10-10 实测致 main.py 在
+    # 代理上无限等待）。正常日（全部板块同日）分位口径与 max 一致。
+    board_last = (pd.Series(sorted(lasts)).quantile(0.05, interpolation="lower")
+                  if lasts else None)
     stock_last = None
     for f in sorted(Path(cache_dir).glob("stock_chunks/chunk_*.parquet")):
         try:
@@ -321,8 +328,12 @@ def prepare(cfg: dict, *, refresh_boards: bool = False,
 
     # 统一按配置截断历史：缓存可能远早于 start_date（增量缓存整包返回，
     # load_stock_chunks 也不按日期过滤），config 的 history.start_date 在此生效
-    start_ts = pd.Timestamp(start)
-    stock_daily = stock_daily[stock_daily["date"] >= start_ts]
+    start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
+    stock_daily = stock_daily[stock_daily["date"].between(start_ts, end_ts)]
+    # 在板块归属过滤之前确定 A 股交易日，避免跨市场指数把港股开放日、
+    # 假期或异常周末行带入 RPS、平滑、前瞻收益及 IC 可知时点。
+    trading_calendar = stock_trading_calendar(stock_daily)
+    stock_daily = stock_daily[stock_daily["date"].isin(trading_calendar)]
 
     # 全市场日成交额（热度变化因子的真实分母，须在板块归属过滤前计算）
     market_total = stock_daily.groupby("date")["amount"].sum()
@@ -334,10 +345,10 @@ def prepare(cfg: dict, *, refresh_boards: bool = False,
     if board_kline is None:
         board_kline = build_board_kline_from_stocks(stock_daily, board_map)
     # 双向截断：缓存可能含 end 之后的行（如中证接口提前发布的次日凌晨占位行）
-    end_ts = pd.Timestamp(end)
     board_kline = board_kline[pd.to_datetime(board_kline["date"]) >= start_ts]
     board_kline = board_kline[pd.to_datetime(board_kline["date"]) <= end_ts]
     board_kline = board_kline[board_kline["board_code"].isin(board_names)]
+    board_kline, calendar_audit = align_board_calendar(board_kline, trading_calendar)
 
     return {
         "stock_daily": stock_daily,
@@ -347,4 +358,31 @@ def prepare(cfg: dict, *, refresh_boards: bool = False,
         "board_names": board_names,
         "market_total": market_total,
         "universe": universe,
+        "trading_calendar": trading_calendar,
+        "calendar_audit": calendar_audit,
     }
+
+
+def stock_trading_calendar(stock_daily: pd.DataFrame) -> pd.DatetimeIndex:
+    """采用缓存中实际有 A 股交易记录的日期；不推测缺失日或填充价格。"""
+    active = stock_daily
+    if "trade_status" in active:
+        active = active[pd.to_numeric(active["trade_status"], errors="coerce") == 1]
+    dates = pd.DatetimeIndex(pd.to_datetime(active["date"]).dropna()).normalize()
+    dates = dates[dates.dayofweek < 5].unique().sort_values()
+    if dates.empty:
+        raise RuntimeError("个股缓存无有效 A 股交易日，无法对齐板块日历")
+    return dates
+
+
+def align_board_calendar(board_kline: pd.DataFrame, calendar: pd.DatetimeIndex
+                         ) -> tuple[pd.DataFrame, dict]:
+    """仅在分析层剔除非 A 股交易日；原始跨市场缓存保留。"""
+    kline = board_kline.copy()
+    kline["date"] = pd.to_datetime(kline["date"]).dt.normalize()
+    keep = kline["date"].isin(calendar)
+    removed_dates = sorted(kline.loc[~keep, "date"].dropna().unique())
+    audit = {"source": "stock_daily_cache", "trading_days": len(calendar),
+             "removed_board_rows": int((~keep).sum()),
+             "removed_dates": [pd.Timestamp(d).strftime("%Y-%m-%d") for d in removed_dates]}
+    return kline.loc[keep].sort_values(["date", "board_code"]).reset_index(drop=True), audit

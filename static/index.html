@@ -357,11 +357,16 @@ tbody tr:hover {
 
 <nav class="tabs">
   <div class="tab active" data-tab="today">今日榜单</div>
-  <div class="tab" data-tab="backtest">回测验证</div>
+  <div class="tab" data-tab="backtest">历史回测诊断</div>
   <div class="tab" data-tab="board">板块详情</div>
 </nav>
 
 <main class="container">
+
+  <div class="card" id="observation-notice" role="status">
+    <b>观察工具 · 当前交易路线已结束</b>
+    <p>2026-10-13 最后一轮组合去重与情绪增量对照未通过退出条件。保留行情、情绪分和历史诊断；高低分榜、极值与旧模型方向均不作为买卖建议。</p>
+  </div>
 
   <!-- ============ Tab1 今日榜单 ============ -->
   <section class="tab-page active" id="page-today">
@@ -372,13 +377,13 @@ tbody tr:hover {
       <div class="help-panel" id="help-rank">
         <div class="row"><b>情绪分：</b>系统给每个板块的"人气打分"，由涨停强度、赚钱效应、涨跌宽度等 6 个原料合成。分数高＝该板块当前人气旺、资金活跃。</div>
         <div class="row"><b>时序分位：</b>该板块当前分数在它<b>自身近 120 天历史</b>中的位置（0~100%）。90% 以上＝亢奋，10% 以下＝冰点。</div>
-        <div class="row"><b>怎么用：</b>先看顶栏健康度灯和风格判定——判定为"动量市"时榜单顺势看（高分榜可关注）；"反转市"时反着看（高分榜是回避区，低分榜是补涨关注区）；"观望"时两榜只作观察。</div>
+        <div class="row"><b>怎么用：</b>观察板块冷热和变化，结合ETF信息识别持仓是否重复暴露于同一主题。高分不等于买入优先级，低分不等于反转机会；旧模型方向只作研究记录。</div>
       </div>
       <div id="chart-diverge" class="chart"></div>
     </div>
 
     <div class="card">
-      <h3>完整排名<span class="hint">点击表头可排序，点击行进入板块详情；ETF 列给出可直接交易的标的</span></h3>
+      <h3>完整排名<span class="hint">点击表头可排序，点击行进入板块详情；ETF 列仅展示跟踪标的对应关系</span></h3>
       <div class="table-wrap">
         <table id="rank-table">
           <thead><tr>
@@ -413,8 +418,8 @@ tbody tr:hover {
       <h3>信号健康度走势<span class="hint">每日滚动 60 日的 IC 均值，区间跟随上方回测窗口；在 0 轴上方说明打分近期能预测涨跌</span><button class="help-btn" data-help="help-ic" title="怎么读这张图">?</button></h3>
       <div class="help-panel" id="help-ic">
         <div class="row"><b>这条线是什么：</b>衡量"最近 60 天，榜单打分和实际涨跌有多一致"。越一致说明打分越准（数值范围 -1 ~ +1）。</div>
-        <div class="row"><b>怎么读：</b>线在 <b>0 轴上方（红色）</b>＝打分方向对，榜单顺势参考；线在 <b>0 轴下方（绿色）</b>＝打分方向反了，高分板块反而容易跌，这时榜单要<b>反着看</b>；只有站上虚线 0.03 以上才算"显著有效"。</div>
-        <div class="row"><b>省事的看法：</b>不用自己读线——顶栏健康度灯旁已新增<b>风格判定</b>（动量市/反转市/观望），判定为反转市时榜单会自动标注成"回避/关注"，跟着标注看就行。</div>
+        <div class="row"><b>怎么读：</b>0 轴上下分别表示该历史样本中的正、负排序相关。0.03 是旧规则的参考线，不代表统计显著，也不能据此正向或反向交易。</div>
+        <div class="row"><b>用途：</b>顶栏保留旧模型读数便于连续观察；交易路线已经结束，方向变化不会恢复交易候选资格。</div>
       </div>
       <div id="chart-ic" class="chart"></div>
     </div>
@@ -437,7 +442,7 @@ tbody tr:hover {
           <div class="row"><b>IC 均值：</b>打分和未来涨跌的吻合度（-1 ~ +1）。正值说明排序方向一致，负数说明方向反了。</div>
           <div class="row"><b>IR（重叠）：</b>IC 的朴素稳定性（均值 ÷ 波动）。前瞻收益会重叠，因此不能作为显著性证据。</div>
           <div class="row"><b>HAC t / Bootstrap：</b>对前瞻收益重叠做时间相关性校正；Bootstrap 区间若覆盖 0，说明有效性尚不稳健。</div>
-          <div class="row"><b>IC 胜率：</b>打分方向判对的天数占比，> 55% 及格，60% 以上较好。</div>
+          <div class="row"><b>IC 正值占比：</b>历史每日排序相关为正的比例，不是账户交易胜率，也没有单独的上线及格线。</div>
           <div class="row"><b>样本数：</b>参与统计的天数，越多越可信。</div>
         </div>
         <div class="table-wrap" style="max-height:200px">
@@ -454,7 +459,7 @@ tbody tr:hover {
       <h3>轮动净值曲线<span class="hint">按榜单调仓的模拟表现（含手续费，频率见上方切换；用板块指数近似代替 ETF）；点击图例可隐藏/显示</span><button class="help-btn" data-help="help-nav" title="怎么读这张图">?</button></h3>
       <div class="help-panel" id="help-nav">
         <div class="row"><b>净值：</b>"1 块钱滚到现在变成多少钱"。1.2 ＝赚了 20%，0.8 ＝亏了 20%。</div>
-        <div class="row"><b>五条线：</b><i>红线</i>＝按所选频率追涨买前 N 名；<i>绿线</i>＝抄底买后 N 名；<i>黄线</i>＝避开前 N 名买其余全部（频率和 N 都见上方切换器）；<i>灰色虚线</i>＝大盘平均（全部板块等权）；<i>蓝色虚线</i>＝沪深300指数。</div>
+        <div class="row"><b>历史模拟：</b><i>红线</i>＝持有前 N 名；<i>绿线</i>＝持有后 N 名；<i>黄线</i>＝持有前 N 名以外的全部板块（频率和 N 见上方切换器）；<i>灰色虚线</i>＝全部板块等权；<i>蓝色虚线</i>＝沪深300指数。以上为旧板块指数研究，不代表真实ETF净收益或交易建议。</div>
         <div class="row"><b>怎么读：</b>策略线在灰虚线<b>上方</b>＝跑赢大盘，下方＝跑输。线越陡＝赚得快；大幅往下掉的段落就是"回撤"（亏钱的时候），掉的越浅越好。</div>
         <div class="row"><b>互动：</b>点击顶部图例可隐藏/显示某条线，方便两两对比。</div>
       </div>
@@ -511,7 +516,7 @@ tbody tr:hover {
       <h3>情绪分 vs 板块指数<span class="hint">近 120 天；情绪分（左轴）领先于价格时最有参考价值</span><button class="help-btn" data-help="help-board-dual" title="怎么读这张图">?</button></h3>
       <div class="help-panel" id="help-board-dual">
         <div class="row"><b>两条线：</b>情绪分（左轴）＝系统给这个板块的"人气打分"；板块指数（右轴）＝板块真实价格走势。</div>
-        <div class="row"><b>怎么读：</b>分数和价格一起走高 ＝ 健康上涨；<b>分数先行回落、价格还在高位 ＝ 可能的见顶信号</b>（分数往往比价格早一步变脸）；分数在低位企稳而价格还在跌 ＝ 可能的抄底观察区。</div>
+        <div class="row"><b>怎么读：</b>比较情绪分与价格的同步或背离，记录市场状态。分数领先、反转预测和可交易收益均未获得本项目的充分验证。</div>
         <div class="row"><b>一句话：</b>把情绪分当作"水温计"，价格当作"水面"——水温先变，水面后动。</div>
       </div>
       <div id="chart-board-dual" class="chart"></div>

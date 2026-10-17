@@ -51,7 +51,7 @@ def _fetch_track_name(code: str) -> str | None:
     url = f"https://fundf10.eastmoney.com/jbgk_{code}.html"
     for attempt in range(3):
         try:
-            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
             m = re.search(r"跟踪标的</th><td>([^<]*)</td>", r.text)
             if m:
                 name = m.group(1).strip()

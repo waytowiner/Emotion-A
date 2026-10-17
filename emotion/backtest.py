@@ -454,14 +454,17 @@ def rolling_ic_validation(ic: pd.Series, *, block_days: int = 20) -> pd.DataFram
 def regime_state(score: pd.DataFrame, board_close: pd.DataFrame, *,
                  ic_window: int = 15, threshold: float = 0.02,
                  horizon: int = 5, min_obs: int = 10,
-                 guard_days: int = 10, guard_threshold: float = -0.03,
+                 guard_days: int = 10, guard_threshold: float | None = -0.03,
                  vol_window: int = 20, vol_threshold: float | None = None,
                  require_robust_signal: bool = False,
                  robust_ic_window: int = 60,
                  robust_bootstrap_samples: int = 500,
                  mono_days: int | None = None,
                  ic_known: pd.Series | None = None,
-                 spread_known: pd.Series | None = None) -> dict:
+                 spread_known: pd.Series | None = None,
+                 ew_halflife: float | None = None,
+                 market_return: float | None = None,
+                 market_volatility: float | None = None) -> dict:
     """当前市场风格判定（regime 自适应，无前视）。
 
     滚动 IC 使用"已走完前瞻窗口"的样本（IC(d) 在 d+horizon 收盘后才可知，
@@ -487,25 +490,25 @@ def regime_state(score: pd.DataFrame, board_close: pd.DataFrame, *,
         if ic_s.empty:
             ic_known = pd.Series(dtype=float)
         else:
-            pos = board_close.index.searchsorted(ic_s.index)
-            known_pos = pos + horizon
-            ok = known_pos < len(board_close.index)
-            ic_known = pd.Series(ic_s.values[ok],
-                                 index=board_close.index[known_pos[ok]])
-    hist = ic_known.dropna().tail(ic_window)
+            ic_known = realized_series(ic_s, board_close.index, lag=horizon)
+    asof = board_close.index[-1]
+    ic_known = ic_known.loc[:asof].dropna()
+    hist = ic_known.tail(ic_window)
 
     eq_ret = board_close.pct_change(fill_method=None).mean(axis=1)
-    mkt_recent = eq_ret.tail(guard_days).sum()
-    guard_hit = pd.notna(mkt_recent) and mkt_recent < guard_threshold
+    mkt_recent = eq_ret.tail(guard_days).sum() if market_return is None else market_return
+    guard_hit = (guard_threshold is not None and pd.notna(mkt_recent)
+                 and mkt_recent < guard_threshold)
 
-    vol_now = eq_ret.tail(vol_window).std()
+    vol_now = eq_ret.tail(vol_window).std() if market_volatility is None else market_volatility
     vol_gate = (vol_threshold is not None and pd.notna(vol_now)
                 and vol_now > vol_threshold)
 
     if len(hist) < min_obs:
         direction, ic_mean, ic_win = "neutral", float("nan"), float("nan")
     else:
-        ic_mean = hist.mean()
+        ic_mean = (hist.ewm(halflife=ew_halflife).mean().iloc[-1]
+                   if ew_halflife else hist.mean())
         ic_win = (hist > 0).mean()
         if ic_mean > threshold:
             direction = "top"
@@ -513,7 +516,8 @@ def regime_state(score: pd.DataFrame, board_close: pd.DataFrame, *,
             direction = "bottom"
         else:
             direction = "neutral"
-    robust = ic_robustness(ic_known.dropna().tail(robust_ic_window), horizon=horizon,
+    raw_direction = direction
+    robust = ic_robustness(ic_known.tail(robust_ic_window), horizon=horizon,
                            bootstrap_samples=robust_bootstrap_samples)
     robust_gate = False
     if require_robust_signal and direction in {"top", "bottom"}:
@@ -532,12 +536,8 @@ def regime_state(score: pd.DataFrame, board_close: pd.DataFrame, *,
             if sp.empty:
                 spread_known = pd.Series(dtype=float)
             else:
-                pos = board_close.index.searchsorted(sp.index)
-                known_pos = pos + horizon
-                ok = known_pos < len(board_close.index)
-                spread_known = pd.Series(sp.values[ok],
-                                         index=board_close.index[known_pos[ok]])
-        tail = spread_known.dropna().tail(mono_days)
+                spread_known = realized_series(sp, board_close.index, lag=horizon)
+        tail = spread_known.loc[:asof].dropna().tail(mono_days)
         if len(tail) >= mono_days:
             spread_last = float(tail.iloc[-1])
             counter = ((tail < 0).all() if direction == "top"
@@ -549,6 +549,7 @@ def regime_state(score: pd.DataFrame, board_close: pd.DataFrame, *,
 
     return {
         "direction": direction,          # top / bottom / neutral
+        "raw_direction": raw_direction,  # IC 阈值方向，供周度确认使用
         "ic_mean": ic_mean,              # 窗口内已实现 IC 均值
         "ic_win_rate": ic_win,
         "n_obs": len(hist),
@@ -563,6 +564,92 @@ def regime_state(score: pd.DataFrame, board_close: pd.DataFrame, *,
         "robust_ic_high": robust["IC_bootstrap_high"],
         "robust_ic_n": robust["IC_nonoverlap_n"],
     }
+
+
+def realized_series(values: pd.Series, calendar: pd.DatetimeIndex,
+                    lag: int = 5) -> pd.Series:
+    """d 日前瞻统计只在同一交易日历的 d+lag 收盘后可知。"""
+    if values.empty:
+        return pd.Series(dtype=float)
+    positions = calendar.get_indexer(values.index)
+    if (positions < 0).any():
+        raise ValueError("前瞻统计日期不在价格交易日历中")
+    known = positions + lag
+    keep = known < len(calendar)
+    return pd.Series(values.to_numpy()[keep], index=calendar[known[keep]])
+
+
+def regime_parameters(config: dict) -> dict:
+    """日报、看板和回测共用的参数读取；不修改生产配置。"""
+    defaults = {"ic_window": 15, "threshold": 0.02, "horizon": 5, "min_obs": 10,
+                "guard_days": 10, "guard_threshold": -0.03, "vol_window": 20,
+                "vol_threshold": None, "require_robust_signal": False,
+                "robust_ic_window": 60, "robust_bootstrap_samples": 500,
+                "mono_days": None}
+    return {key: config.get(key, value) for key, value in defaults.items()}
+
+
+def regime_decisions(score: pd.DataFrame, board_close: pd.DataFrame, *,
+                     confirm: int = 1, min_pick: int = 3,
+                     ic_known: pd.Series | None = None,
+                     spread_known: pd.Series | None = None,
+                     market_returns: pd.Series | None = None,
+                     market_volatility: pd.Series | None = None,
+                     **parameters) -> pd.DataFrame:
+    """周度决策共用 regime_state，先确认原始方向，所有闸门即时降级。
+
+    state_direction 是与当日报告相同的单日判定；direction 是经过连续
+    confirm 次周度 IC 读数确认后的调仓方向。风控闸门不受确认迟滞影响。
+    """
+    horizon = parameters.get("horizon", 5)
+    if ic_known is None:
+        ic_known = realized_series(daily_ic_series(score, board_close, horizon),
+                                   board_close.index, lag=horizon)
+    if spread_known is None and parameters.get("mono_days"):
+        spread_known = realized_series(quantile_spread_series(score, board_close, horizon),
+                                       board_close.index, lag=horizon)
+    rows = []
+    for dt in rebalance_dates(score.dropna(how="all").index):
+        available = score.loc[dt].reindex(board_close.columns).dropna()
+        if dt not in board_close.index or len(available) < min_pick:
+            continue
+        state = regime_state(
+            score.loc[:dt], board_close.loc[:dt], ic_known=ic_known,
+            spread_known=spread_known,
+            market_return=(market_returns.get(dt, np.nan) if market_returns is not None else None),
+            market_volatility=(market_volatility.get(dt, np.nan) if market_volatility is not None else None),
+            **parameters)
+        rows.append({"date": dt, **state, "state_direction": state["direction"]})
+    if not rows:
+        return pd.DataFrame(columns=["direction", "raw_direction", "state_direction"],
+                            index=pd.DatetimeIndex([], name="date"))
+    decisions = pd.DataFrame(rows).set_index("date")
+    decisions["confirmed_direction"] = apply_confirm_hysteresis(
+        decisions["raw_direction"], confirm=confirm)
+    blocked = decisions[["guard_hit", "vol_gate", "robust_gate", "mono_gate"]].any(axis=1)
+    decisions["direction"] = decisions["confirmed_direction"].where(~blocked, "neutral")
+    return decisions
+
+
+def regime_snapshot(score: pd.DataFrame, board_close: pd.DataFrame,
+                    config: dict, *, top_n: int = 3) -> dict:
+    """当日风格与最近完成的周度调仓判定；两者明确区分。"""
+    parameters = regime_parameters(config)
+    horizon = parameters["horizon"]
+    ic_known = realized_series(daily_ic_series(score, board_close, horizon),
+                               board_close.index, lag=horizon)
+    spread_known = realized_series(quantile_spread_series(score, board_close, horizon),
+                                   board_close.index, lag=horizon)
+    state = regime_state(score, board_close, ic_known=ic_known,
+                         spread_known=spread_known, **parameters)
+    confirm = config.get("confirm_readings", 1)
+    decisions = regime_decisions(score, board_close, confirm=confirm, min_pick=top_n,
+                                 ic_known=ic_known, spread_known=spread_known, **parameters)
+    state.update({"ic_window": parameters["ic_window"], "guard_days": parameters["guard_days"],
+                  "mono_days": parameters["mono_days"], "confirm_readings": confirm,
+                  "rebalance_date": decisions.index[-1].strftime("%Y-%m-%d") if len(decisions) else None,
+                  "rebalance_direction": decisions.iloc[-1]["direction"] if len(decisions) else "neutral"})
+    return state
 
 
 def _report_body(ic_df: pd.DataFrame, quant_df: pd.DataFrame,

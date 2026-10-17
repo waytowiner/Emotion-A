@@ -127,32 +127,15 @@ def build_weights(s: pd.Series, *, direction: str, spec: dict,
 # ---------- 方向决策序列（与生产脚本逐行一致，全变体共用） ----------
 def decision_sequence(score_df: pd.DataFrame, board_close: pd.DataFrame,
                       ic_known: pd.Series, *, ic_window: int, threshold: float,
-                      min_obs: int, confirm: int, min_pick: int = 3
+                      min_obs: int, confirm: int, min_pick: int = 3,
+                      regime_config: dict | None = None
                       ) -> tuple[dict, dict, pd.Series, pd.DatetimeIndex]:
-    days_with_score = score_df.dropna(how="all").index
-    rebal_dates = backtest.rebalance_dates(days_with_score, freq="W-FRI")
-    price_boards = board_close.pct_change().columns
-
-    raw_dir, ic_by_date = {}, {}
-    for dt in rebal_dates:
-        s = score_df.loc[dt].dropna()
-        s = s[s.index.isin(price_boards)]
-        if len(s) < min_pick:
-            continue
-        hist = ic_known.loc[:dt].tail(ic_window)
-        ic_mean = hist.mean() if len(hist) >= min_obs else np.nan
-        ic_by_date[dt] = ic_mean
-        if np.isnan(ic_mean):
-            raw_dir[dt] = "neutral"
-        elif ic_mean > threshold:
-            raw_dir[dt] = "top"
-        elif ic_mean < -threshold:
-            raw_dir[dt] = "bottom"
-        else:
-            raw_dir[dt] = "neutral"
-    confirmed = backtest.apply_confirm_hysteresis(
-        pd.Series(raw_dir, dtype=object), confirm=confirm)
-    return ic_by_date, raw_dir, confirmed, rebal_dates
+    parameters = backtest.regime_parameters(regime_config or {})
+    parameters.update(ic_window=ic_window, threshold=threshold, min_obs=min_obs)
+    decisions = backtest.regime_decisions(score_df, board_close, ic_known=ic_known,
+                                         confirm=confirm, min_pick=min_pick, **parameters)
+    return (decisions["ic_mean"].to_dict(), decisions["raw_direction"].to_dict(),
+            decisions["direction"], decisions.index)
 
 
 # ---------- 带权重的轮动回测 ----------
@@ -164,7 +147,7 @@ def weighted_rotation(score_df: pd.DataFrame, board_close: pd.DataFrame, *,
                       cost_bps: float = 5.0,
                       vol_lookback: int = VOL_LOOKBACK) -> dict:
     """周度调仓、可插拔权重与组合波动目标；方向决策由外部传入（全变体共用）。"""
-    daily_ret = board_close.pct_change()
+    daily_ret = board_close.pct_change(fill_method=None)
     cost = cost_bps / 10000.0
     price_boards = daily_ret.columns
 
@@ -290,7 +273,7 @@ def main() -> None:
     cfg = pipeline.load_config()
     end = args.end or pipeline.cache_end_date(cfg)
     print(f"[1/5] 准备数据（缓存口径，无网络），end={end} ...")
-    data = pipeline.prepare(cfg, end_override=end)
+    data = pipeline.prepare(cfg, end_override=end, offline=True)
 
     print("[2/5] 计算因子与情绪分 ...")
     factors = compute_all_factors(data["stock_daily"], data["board_map"],
@@ -320,14 +303,14 @@ def main() -> None:
     ok = known_pos < len(board_close.index)
     ic_known = pd.Series(ic_s.values[ok], index=board_close.index[known_pos[ok]])
 
-    eq_ret = board_close.pct_change().mean(axis=1)
+    eq_ret = board_close.pct_change(fill_method=None).mean(axis=1)
     mkt_guard = eq_ret.rolling(guard_days).sum()
     vol = eq_ret.rolling(int(regime_cfg.get("vol_window", 20))).std()
     vol_threshold = regime_cfg.get("vol_threshold")
 
     ic_by_date, raw_dir, confirmed, _ = decision_sequence(
         smoothed, board_close, ic_known, ic_window=ic_window,
-        threshold=threshold, min_obs=min_obs, confirm=confirm)
+        threshold=threshold, min_obs=min_obs, confirm=confirm, regime_config=regime_cfg)
     print(f"      调仓日 {len(ic_by_date)} 个；方向分布 "
           f"{pd.Series(confirmed).value_counts().to_dict()}")
 

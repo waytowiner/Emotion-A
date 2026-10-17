@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from emotion.project_status import OBSERVATION_NOTICE
+
 
 def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
                  signals: dict[str, list[str]], board_names: dict[str, str],
@@ -18,8 +20,7 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
     """生成当日 Markdown 报告文本。board_names: board_code -> 名称。
 
     health: recent_signal_health 的输出（最近 N 日 IC 监控），可选。
-    regime: backtest.regime_state 的输出（风格判定 + 方向建议），可选；
-            提供时榜单语义按方向自动改写（Top 榜在反转市标注为回避等）。
+    regime: 原模型读数，可选；只留作研究记录，不改变观察榜的用途。
     breakthrough: signal.breakthrough 配置，用于让报告阈值与实际信号判定一致。
     universe: {"board_source": ..., "n_boards": ...}，用于在报告头标注板块口径。
     factor_ic: backtest.factor_ic_snapshot 的输出（逐因子 IC 与可信度），可选。
@@ -75,27 +76,14 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
 
     if health and health.get("n"):
         ic_m, ic_w = health["ic_mean"], health["ic_win_rate"]
-        state = "🟢 信号有效（顺势）" if ic_m > 0.03 else (
-            "🔴 信号失效/反转" if ic_m < -0.03 else "🟡 信号弱")
+        state = "历史排序相关为正" if ic_m > 0.03 else (
+            "历史排序相关为负" if ic_m < -0.03 else "历史排序相关较弱")
         health_txt = (f"近 {health['n']} 日 IC={ic_m:+.3f}，胜率={ic_w:.0%} → {state}。"
-                      "IC 转负说明市场风格已切换，榜单方向需反向理解。")
-        # 分层价差区分"信号反"与"信号死"：IC 均值无法分辨二者
+                      "这是已实现收益的统计关系，不能据此确认风格切换或反向交易。")
         sp = health.get("spread_mean")
         if sp is not None and pd.notna(sp):
-            if sp < 0:
-                health_txt += (f" 分层价差 Q5−Q1={sp:+.2%}/5日：分组单调倒置，"
-                               "属“信号反”而非“信号死”——低分组相对占优，"
-                               "但反转未经 regime 确认前仍只观察、不提前抄底。")
-            else:
-                health_txt += (f" 分层价差 Q5−Q1={sp:+.2%}/5日：分组结构未倒置。"
-                               "IC 弱而价差≈0 时是“信号死”（无结构），两榜仅观察。")
-        # 规则3 regime 自适应语义
-        if ic_m > 0.03:
-            div_label = "风险预警（顺势期建议回避）"
-        elif ic_m < -0.03:
-            div_label = "反转机会（逆势期可观察抄底）"
-        else:
-            div_label = "背离观察（信号弱，暂不操作）"
+            health_txt += f" 分层价差 Q5−Q1={sp:+.2%}/5日；端点差不等于全部分组单调。"
+        div_label = "背离观察"
     else:
         ic_m = None
         health_txt = "数据不足，暂无法评估。"
@@ -110,22 +98,17 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
     proxy_days = int(rule_cfg.get("flow_positive_days",
                                   rule_cfg.get("fund_positive_days", 2)))
 
-    # 风格判定（regime 自适应）：方向建议 + 榜单语义自动改写
+    # 保留原模型读数供观察，不把统计方向翻译为交易动作。
     dir_meta = {
-        "top": ("🟢 动量市 → 榜单顺势使用",
-                "情绪分 Top（顺势关注榜）",
-                "情绪分 Bottom（观察榜）"),
-        "bottom": ("🔴 反转市 → 榜单反向使用",
-                   "情绪分 Top（回避榜：高情绪板块倾向跑输）",
-                   "情绪分 Bottom（关注榜：低情绪板块倾向补涨）"),
-        "neutral": ("🟡 观望 → 不做方向性轮动",
-                    "情绪分 Top（仅观察，不建议追高）",
-                    "情绪分 Bottom（仅观察，不建议抄底）"),
+        "top": "原模型读数：正向",
+        "bottom": "原模型读数：反向",
+        "neutral": "原模型读数：中性",
     }
+    top_label = f"情绪分 Top {top_n}（高分观察榜）"
+    bottom_label = f"情绪分 Bottom {top_n}（低分观察榜）"
     if regime:
         d = regime.get("direction", "neutral")
-        regime_head, top_label, bottom_label = dir_meta.get(
-            d, dir_meta["neutral"])
+        regime_head = dir_meta.get(d, dir_meta["neutral"])
         ic_txt = (f"{regime['ic_mean']:+.3f}（胜率 "
                   f"{regime['ic_win_rate']:.0%}，{regime['n_obs']} 个样本）"
                   if pd.notna(regime.get("ic_mean")) else "样本不足")
@@ -134,37 +117,37 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
             mkt = regime.get("mkt_recent")
             mkt_txt = f"{mkt:+.1%}" if pd.notna(mkt) else "—"
             gates.append(f"回撤护栏触发（市场近 "
-                         f"{regime.get('guard_days', 10)} 日累计 {mkt_txt}）→ 强制观望")
+                         f"{regime.get('guard_days', 10)} 日累计 {mkt_txt}）")
         if regime.get("vol_gate"):
-            gates.append("波动闸门触发 → 强制观望")
+            gates.append("波动闸门触发")
         if regime.get("robust_gate"):
             low, high = regime.get("robust_ic_low"), regime.get("robust_ic_high")
             ci = (f"[{low:+.3f}, {high:+.3f}]" if pd.notna(low) and pd.notna(high)
                   else "样本不足")
-            gates.append(f"IC 稳健性闸门（Bootstrap 95% CI {ci} 覆盖 0）→ 强制观望")
+            gates.append(f"IC 稳健性闸门（Bootstrap 95% CI {ci} 未确认统计方向）")
         if regime.get("mono_gate"):
             n = regime.get("mono_days", 3)
             sp = regime.get("spread_last")
             sp_txt = f"{sp:+.2%}" if pd.notna(sp) else "—"
             gates.append(f"单调性破坏预警（连续 {n} 个可知日分层价差反向，"
-                         f"最新 Q5−Q1={sp_txt}/5日）→ 提前观望")
+                         f"最新 Q5−Q1={sp_txt}/5日）")
         gate_txt = ("；".join(gates) if gates else "未触发")
-        regime_txt = f"""## 风格判定（regime 自适应，自动方向）
+        regime_txt = f"""## 原模型状态（仅作观察）
 
 **{regime_head}**
 
 - 已实现 IC（近 {regime.get('ic_window', 15)} 日，无前视）：{ic_txt}
 - 风控闸门：{gate_txt}
-- 使用纪律：观望=等权持有/降低仓位，不做方向性轮动；方向判定与参数见
-  config.yaml `regime` 段，回测依据 report/regime_adaptive_backtest_*.md
+- 原有计算参数继续冻结在 config.yaml `regime` 段。
 
-> 榜单语义已按当前风格自动标注：动量市 Top 榜顺势参考；反转市 Top 榜按回避
-> 理解、Bottom 榜按补涨关注；观望期两榜仅作观察。风格判定基于已实现 IC，
-> 存在约 1 周的确认滞后（方向期间若分层价差连续反向，单调性破坏预警会提前
-> 降级观望）；参数来自单一风格周期的回测，需持续校验。"""
+> 方向是旧模型的研究读数，不代表已验证的交易优势。高低分榜均只观察；
+> 历史回测中的 neutral=等权是模拟规则，不是当前仓位建议。"""
+        if "rebalance_direction" in regime:
+            execution = {"top": "正向", "bottom": "反向", "neutral": "中性"}
+            regime_txt += (f"\n\n- 最近研究信号日：{regime.get('rebalance_date') or '尚无'}；"
+                           f"旧规则确认后读数：{execution[regime['rebalance_direction']]}。"
+                           f"连续确认次数参数：{regime.get('confirm_readings', 1)}；不生成交易指令。")
     else:
-        top_label = f"情绪分 Top {top_n}"
-        bottom_label = f"情绪分 Bottom {top_n}"
         regime_txt = ""
 
     # 因子层监控：把合成分的 IC 拆到各因子，区分"方向可信"与"风格切换"
@@ -179,9 +162,8 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
         fw = int(factor_ic["window"].iloc[0])
         rows = [f"## 因子层监控（风格拆分，主看近 {fw} 日）", "",
                 "综合分的 IC 是 6 个因子加权后的结果，单个因子失灵会被其余因子"
-                "掩盖。本表把风格拆到因子级：**方向可信**（移动区块 Bootstrap 95% CI "
-                "排除 0）才可据此调整用法；**与全期反向**只说明风格切换——据此取反"
-                "等于拟合最近行情，不做。", "",
+                "掩盖。本表展示因子与已实现收益的关系。移动区块 Bootstrap 95% CI "
+                "排除 0 也不证明可交易超额；与全期反向仅为分段差异，不据此取反或调权。", "",
                 f"| 因子 | 全期 IC | 120日 IC | 60日 IC | {fw}日 IC | {fw}日胜率 "
                 f"| {fw}日 HAC t | {fw}日 Bootstrap 95% CI | 判定 |",
                 "|---|---|---|---|---|---|---|---|---|"]
@@ -207,6 +189,8 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
 
     md = f"""# A股板块情绪日报 {date:%Y-%m-%d}
 
+> **观察模式**：{OBSERVATION_NOTICE}
+
 > 情绪分为多因子 z-score 加权合成（涨停强度/赚钱效应/涨跌宽度/相对强度/热度变化/晋级率），
 > 经 5 日平滑。时序分位为该板块相对自身近期的位置。
 > 本报告为同步/短滞后指标的客观读数，不构成投资建议。{uni_txt}
@@ -223,18 +207,18 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
 
 - **升温榜**（连续 3 日上升）：{fmt_list('heating')}
 - **降温榜**（连续 3 日下降）：{fmt_list('cooling')}
-- **亢奋**（分位 > 90%，不宜追高）：{fmt_list('hot')}
-- **冰点**（分位 < 10%，观察反转）：{fmt_list('cold')}
+- **亢奋**（分位 > 90%）：{fmt_list('hot')}
+- **冰点**（分位 < 10%）：{fmt_list('cold')}
 - **切换预警**：{fmt_list('switching')}
-- **底部反转预警**（冰点 + 成交额价格代理 z > {proxy_z:g}）：{fmt_list('bottom_reversal')}
-- **顺势加速度**（亢奋 + 单因子偏离 {hot_sigma:g}σ，动量市买点）：{fmt_list('extreme_hot')}
-- **极端冷区异动**（冰点 + 单因子偏离 {cold_sigma:g}σ，动量市回避）：{fmt_list('extreme_cold')}
+- **冷区代理异动**（冰点 + 成交额价格代理 z > {proxy_z:g}）：{fmt_list('bottom_reversal')}
+- **极端热区异动**（亢奋 + 单因子偏离 {hot_sigma:g}σ）：{fmt_list('extreme_hot')}
+- **极端冷区异动**（冰点 + 单因子偏离 {cold_sigma:g}σ）：{fmt_list('extreme_cold')}
 - **代理-情绪背离**（成交额价格代理连续 {proxy_days} 日为正 + 情绪为负，{div_label}）：{fmt_list('fund_emotion_divergence')}
 
 > 穿透规则为原始日度读数、不经平滑；上方经平滑的榜单反映趋势，穿透信号反映突变——
-> 二者互补。顺势环境中 extreme_hot 为主要买点、extreme_cold 为回避信号、
+> 二者用于描述市场状态，极值不代表入场或离场时机。
 > “成交额价格代理”=成交额×涨跌幅，不是主动买卖盘意义的资金净流入；代理-情绪背离
-> 的语义随 regime 自适应切换。接入真实资金流前，不应将它作为资金流证据。
+> 仅记录两个指标的分歧。接入真实资金流前，不应将它作为资金流证据。
 
 ## {top_label}
 
@@ -268,3 +252,93 @@ def save_report(report_dir: str | Path, date: pd.Timestamp, md: str,
     csv_path = out / f"scores_{day}.csv"
     last.to_csv(csv_path, index=False, encoding="utf-8-sig")
     return md_path, csv_path
+
+
+# ---------------------------------------------------------------------------
+# 前瞻预注册台账（prospective log）
+# ---------------------------------------------------------------------------
+# 用途：每天生成日报时自动留痕一行"当日事前判定 + 关键证据"，只追加、
+# 不回改。2026-10-13最终实验已结束交易路线；新增记录只保留观察用途。
+# 回溯补录的行必须带 * 标记，与事前留痕严格区分。
+PROSPECTIVE_HEADER = (
+    "# 前瞻预注册台账（事前判定留痕）\n\n"
+    "> main.py 每次生成日报自动追加；同日重跑不重复。回溯补录行以 * 开头。\n"
+    "> 2026-10-13：最终实验未通过，当前交易路线已结束；此后台账仅为观察记录。\n\n"
+    "| 日期 | 判定 | 触发闸门 | 15日IC | 15日胜率 | 60日IC | 60日胜率 "
+    "| 60日价差 | 可知日价差 | 60日CI | 近10日市场 | 记录时间 |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|---|\n"
+)
+
+_DIRECTION_CN = {"top": "动量市", "bottom": "反转市", "neutral": "观望"}
+
+
+def _fmt(x, fmt="{:+.3f}", na="-") -> str:
+    try:
+        if x is None or pd.isna(x):
+            return na
+        return fmt.format(float(x))
+    except (TypeError, ValueError):
+        return na
+
+
+def append_prospective_log(report_dir: str | Path, date: pd.Timestamp,
+                           regime: dict, health: dict,
+                           *, backfill: bool = False) -> Path | None:
+    """追加一行前瞻判定到 report/prospective_log.md。
+
+    同一日期已存在（且非回溯覆盖场景）则跳过，幂等。backfill=True 用于
+    历史回填脚本，行首日期后加 * 标记。
+    """
+    out = Path(report_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "prospective_log.md"
+    day = date.strftime("%Y-%m-%d")
+
+    gates = []
+    if regime.get("guard_hit"):
+        gates.append("回撤护栏")
+    if regime.get("vol_gate"):
+        gates.append("波动闸门")
+    if regime.get("robust_gate"):
+        gates.append("IC稳健性")
+    if regime.get("mono_gate"):
+        gates.append("单调性破坏")
+    gate_str = "/".join(gates) if gates else "-"
+
+    ci_low, ci_high = _fmt(health.get("IC_bootstrap_low")), _fmt(
+        health.get("IC_bootstrap_high"))
+    ci_str = "-" if ci_low == ci_high == "-" else f"[{ci_low}, {ci_high}]"
+
+    mark = "*" if backfill else ""
+    row = (
+        f"| {day}{mark} | {_DIRECTION_CN.get(regime.get('direction'), '?')}"
+        f" | {gate_str}"
+        f" | {_fmt(regime.get('ic_mean'))}"
+        f" | {_fmt(regime.get('ic_win_rate'), '{:.0%}')}"
+        f" | {_fmt(health.get('ic_mean'))}"
+        f" | {_fmt(health.get('ic_win_rate'), '{:.0%}')}"
+        f" | {_fmt(health.get('spread_mean'), '{:+.2%}')}"
+        f" | {_fmt(regime.get('spread_last'), '{:+.2%}')}"
+        f" | {ci_str}"
+        f" | {_fmt(regime.get('mkt_recent'), '{:+.1%}')}"
+        f" | {datetime.now().strftime('%Y-%m-%d %H:%M')} |"
+    )
+
+    existing = ""
+    if path.exists():
+        existing = path.read_text(encoding="utf-8")
+        if OBSERVATION_NOTICE not in existing:
+            # 保留历史行及其原始预注册文字，另加有日期的状态更新。
+            existing = (f"> 状态更新（2026-10-13）：{OBSERVATION_NOTICE}"
+                        "原2027-01交易资格裁决安排已由本次最终实验决定取代。\n\n" + existing)
+            path.write_text(existing, encoding="utf-8")
+        for line in existing.splitlines():
+            if line.startswith(f"| {day} ") or line.startswith(f"| {day}* "):
+                return None  # 同日已留痕，幂等跳过
+
+    if not existing:
+        path.write_text(PROSPECTIVE_HEADER + row + "\n", encoding="utf-8")
+    else:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(row + "\n")
+    return path

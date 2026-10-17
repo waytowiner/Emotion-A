@@ -20,6 +20,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from emotion.project_status import project_status
+
 ROOT = Path(__file__).resolve().parent
 DASH_DIR = ROOT / "data" / "dashboard"
 DUMP_SCRIPT = ROOT / "scripts" / "dump_dashboard_data.py"
@@ -108,7 +110,8 @@ async def no_cache(request, call_next):
 @app.get("/api/overview")
 def api_overview():
     c = require_data()
-    return {"latest": c["latest"], "meta": c["meta"]}
+    # 用当前用途声明覆盖旧缓存，即使尚未重新导出也不会丢失观察模式。
+    return {"latest": {**c["latest"], "project_status": project_status()}, "meta": c["meta"]}
 
 
 @app.get("/api/scores")

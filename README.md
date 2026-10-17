@@ -1,7 +1,12 @@
-# Emotion-A：A 股板块情绪量化系统
+# Emotion-A：A 股板块情绪观察工具
 
-分板块情绪量化：每日输出各板块情绪分排名与切换信号，并用历史回测验证信号有效性，
-为板块 ETF 的波段操作（1-4 周）提供数据参考。
+分板块情绪量化：每日输出板块冷热、情绪分排名与状态变化，保留历史回测供诊断。
+
+**2026-10-13：最后一轮组合去重与情绪增量对照未通过退出条件，当前情绪交易路线结束，项目保留为观察工具。**
+不再将高低分榜、极值或旧模型方向作为买卖建议，不继续在同一历史上调参寻找赢家。
+情绪因子、权重、平滑与所有原配置保持不变；用途声明独立于计算参数。
+详见 [项目结论](PROJECT_STATUS.md)、[事前实验规则](config/final_portfolio_experiment.json)
+与本地生成的 [最终实验报告](report/final_portfolio_20261009/report.md)。
 
 方法论借鉴：
 - 国泰海通《从涨停板、"打板策略"到赚钱效应引发的情绪择时指标》的因子体系
@@ -25,7 +30,7 @@ python scripts/fetch_etf_boards.py   # 当前默认 board_source=etf（中证可
 
 # 3) 每日增量更新（已最新时秒级跳过；单日增量走腾讯快照约 1 分钟，
 #    多日补抓回退 baostock 逐股约 20-40 分钟；启动时已不再自动执行，
-#    改为看板界面「更新数据」按钮触发 /api/update 全流程，工作日 18:00 自动化亦会执行）
+#    通过看板「更新数据」按钮触发 /api/update 全流程；每日定时采集已于 2026-10-13 停用）
 python scripts/fetch_etf_boards.py
 python scripts/fetch_stock_history.py --update
 
@@ -71,6 +76,8 @@ python -m pytest tests/ -q
 
 ## 数据口径与已知边界
 
+- 分析层以个股缓存中实际有交易记录的 A 股日期统一日历，过滤跨市场指数的港股开放日及异常周末行；因子、平滑、前瞻收益与 IC 可知时点共用该日历，不填充缺失价格。原始行情缓存保留。
+- 日报、看板和自适应回测共用 `regime_state` 的四道风控闸门。日报同时显示当天风格与最近已完成调仓日的确认方向；连续两次周度确认仍只用于调仓，单日风格读数不等于执行指令。历史回测报告需按修复后的口径重新生成。
 - 数据源：东财 push2his（板块指数）、baostock（个股日线）。**不含北交所**（baostock 无此数据，占比很小）。
 - 涨停判定：最高价涨幅触及涨停阈值且收盘封板（距最高价 0.2% 内）。阈值：主板 9.8%、创业板/科创板 19.8%、主板 ST 4.8%（创业板/科创板 ST 仍 20%）。优先用 baostock 按日 `isST` 字段还原历史戴帽/摘帽状态，缺省回退名称含 ST。
 - 东财 push2（clist）接口对请求频率敏感，会间歇性拒绝连接；传输层已做退避重试与缓存降级（`emotion/transport.py`）。
@@ -129,6 +136,33 @@ python server.py
 - 看板数据落在 `data/dashboard/`（`server.py` 只读该目录，启动快；缺失时会提示先跑导出脚本）
 
 ### ETF 清单与映射维护
+
+真实 ETF 完整自适应回测（不改策略配置）：
+
+```bash
+python scripts/fetch_etf_klines.py --end 2026-10-09 --force --workers 4
+python scripts/backtest_etf_prices.py --end 2026-10-09 --slippage-bps 5
+python scripts/validate_etf_backtest.py --directory report/etf_adaptive_20261009
+python scripts/analyze_etf_attribution.py --source report/etf_adaptive_20261009 --output report/etf_attribution_20261009
+python scripts/analyze_final_portfolio.py
+```
+
+回测共用日报的 IC、闸门和周度确认，在下一 A 股交易日开盘成交，持仓权重随价格漂移。
+买卖分别计入 `backtest.cost_bps` 费用和命令行指定滑点，首次建仓也收费。
+原板块排名缺少映射或 ETF 尚未上市时，该权重留现金；同时输出仅映射池落仓的对照，
+以及同费用的 ETF 池等权周度组合和 510300 买入持有基准。`neutral` 沿用等权规则。
+结果与逐笔账本保存在 `report/etf_adaptive_日期/`。使用复权价格和归一化份额，尚未建模
+整手、最低佣金、涨跌停排队与容量；当前成分及 ETF 映射仍有快照选择偏差。
+
+归因脚本校验上一轮行情、映射和配置哈希，使用相同信号日可用 ETF 池比较固定
+Top3、Bottom3、等权和自适应；原始 IC/确认/闸门方向仅作诊断对照，不搜索参数。
+输出成本拆分、调仓周期/逐ETF盈亏、排名区间、方向时点错位诊断与校验记录。
+周期以次日成交开盘为边界，隔夜收益归旧持仓，最后未执行的信号不计入归因。
+
+最后一轮实验先锁定规则和全部输入哈希，再对照同池月度等权、历史相关性去重等权、
+去重后小幅情绪倾斜；标准成本为买卖各5bps费用+5bps滑点，压力测试均加倍。
+输出分组、逐笔交易、净值、配对统计区间和六项退出条件。重复运行要求规则/输入一致。
+回测使用复权归一化份额；结果用于结束当前研究路线，不构成上线或购买等权组合的依据。
 
 ```bash
 python scripts/fetch_etf_list.py   # 抓全量 ETF（东财 clist，被风控时自动用新浪兜底）-> data/cache/etf_list.parquet

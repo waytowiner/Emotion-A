@@ -39,10 +39,7 @@ from emotion.backtest import daily_ic_series
 def ic_known_series(ic_s: pd.Series, calendar: pd.DatetimeIndex,
                     lag: int = 5) -> pd.Series:
     """把 IC 序列的索引后移 lag 个交易日：IC(d) 在 d+5 收盘后才可知。"""
-    pos = calendar.searchsorted(ic_s.index)
-    known_pos = pos + lag
-    ok = known_pos < len(calendar)
-    return pd.Series(ic_s.values[ok], index=calendar[known_pos[ok]])
+    return backtest.realized_series(ic_s, calendar, lag=lag)
 
 
 def adaptive_rotation(score_df: pd.DataFrame, board_close: pd.DataFrame,
@@ -55,48 +52,41 @@ def adaptive_rotation(score_df: pd.DataFrame, board_close: pd.DataFrame,
                       ew_halflife: float | None = None,
                       mkt_ret: pd.Series | None = None,
                       guard: float | None = None,
-                      confirm: int = 1) -> dict:
+                      confirm: int = 1,
+                      bottom_action: str = "bottom",
+                      horizon: int = 5, guard_days: int = 10,
+                      require_robust_signal: bool = False,
+                      robust_ic_window: int = 60,
+                      robust_bootstrap_samples: int = 500,
+                      mono_days: int | None = None,
+                      vol_window: int = 20) -> dict:
     """regime 自适应周度轮动。neutral=等权持有全部板块。
 
     ew_halflife：对窗口内 IC 做指数加权（半衰期，交易日），反应更快。
     guard：回撤护栏——市场近 10 日累计收益 < guard（如 -0.03）时强制观望。
     confirm：方向确认迟滞——非观望方向需连续 confirm 次调仓判定同向才生效，
-    未确认期间观望；风控闸门（波动/回撤）不受迟滞影响，始终即时生效。
+    未确认期间观望；四道风控闸门不受迟滞影响，始终即时生效。
+    bottom_action：direction=="bottom"（反转确认）时的持仓方式——
+      "bottom"    买情绪 Bottom N（默认，集中抄底）；
+      "avoid_top" 回避情绪 Top N、等权持有其余全部（温和反向：只避高分组）；
+      "low_groups" 等权持有情绪分最低 40%（约两个五分位，宽基低分组）。
+    决策方向序列不变，仅反转期的落仓方式不同。
     """
-    days_with_score = score_df.dropna(how="all").index
-    rebal_dates = backtest.rebalance_dates(days_with_score, freq="W-FRI")
-    daily_ret = board_close.pct_change()
+    if bottom_action not in ("bottom", "avoid_top", "low_groups"):
+        raise ValueError(f"未知 bottom_action: {bottom_action}")
+    daily_ret = board_close.pct_change(fill_method=None)
     cost = cost_bps / 10000.0
     price_boards = daily_ret.columns
 
-    # 决策序列：先在各调仓日算出 IC 原始方向，整体做确认迟滞；
-    # 风控闸门在交易循环内即时生效（风险降级不做迟滞）。
-    raw_dir, ic_by_date = {}, {}
-    for dt in rebal_dates:
-        # 只考虑有行情数据的板块：有分无价（如 K 线抓取失败）的板块不可交易
-        s = score_df.loc[dt].dropna()
-        s = s[s.index.isin(price_boards)]
-        if len(s) < top_n:
-            continue
-        hist = ic_known.loc[:dt].tail(ic_window)
-        if len(hist) >= min_obs:
-            if ew_halflife:
-                ic_mean = hist.ewm(halflife=ew_halflife).mean().iloc[-1]
-            else:
-                ic_mean = hist.mean()
-        else:
-            ic_mean = np.nan
-        ic_by_date[dt] = ic_mean
-        if np.isnan(ic_mean):
-            raw_dir[dt] = "neutral"
-        elif ic_mean > threshold:
-            raw_dir[dt] = "top"
-        elif ic_mean < -threshold:
-            raw_dir[dt] = "bottom"
-        else:
-            raw_dir[dt] = "neutral"
-    confirmed = backtest.apply_confirm_hysteresis(
-        pd.Series(raw_dir, dtype=object), confirm=confirm)
+    # 单日读数与日报共用同一函数；周度确认只影响调仓，闸门始终即时生效。
+    decisions = backtest.regime_decisions(
+        score_df, board_close, ic_known=ic_known, min_pick=top_n, confirm=confirm,
+        ic_window=ic_window, threshold=threshold, min_obs=min_obs, horizon=horizon,
+        guard_days=guard_days, guard_threshold=guard,
+        vol_window=vol_window, vol_threshold=vol_threshold,
+        market_returns=mkt_ret, market_volatility=vol_series, ew_halflife=ew_halflife,
+        require_robust_signal=require_robust_signal, robust_ic_window=robust_ic_window,
+        robust_bootstrap_samples=robust_bootstrap_samples, mono_days=mono_days)
 
     holdings: list[str] = []
     nav, bench_nav = 1.0, 1.0
@@ -107,7 +97,7 @@ def adaptive_rotation(score_df: pd.DataFrame, board_close: pd.DataFrame,
     current_weights = pd.Series(dtype=float)
 
     all_days = daily_ret.index
-    rebal_set = set(ic_by_date)
+    rebal_set = set(decisions.index)
 
     for dt in all_days:
         if holdings:
@@ -121,27 +111,18 @@ def adaptive_rotation(score_df: pd.DataFrame, board_close: pd.DataFrame,
         if dt in rebal_set:
             s = score_df.loc[dt].dropna()
             s = s[s.index.isin(price_boards)]  # 与决策序列同口径：有分无价的剔除
-            ic_mean = ic_by_date[dt]
-            direction = confirmed.get(dt, "neutral")
-
-            vol_gate = False
-            if vol_series is not None and vol_threshold is not None:
-                v = vol_series.get(dt, np.nan)
-                vol_gate = pd.notna(v) and v > vol_threshold
-            if vol_gate:
-                direction = "neutral"
-
-            guard_hit = False
-            if mkt_ret is not None and guard is not None:
-                m = mkt_ret.get(dt, np.nan)
-                guard_hit = pd.notna(m) and m < guard
-            if guard_hit:
-                direction = "neutral"
+            decision = decisions.loc[dt]
+            direction = decision["direction"]
 
             if direction == "top":
                 pick = s.nlargest(top_n)
             elif direction == "bottom":
-                pick = s.nsmallest(top_n)
+                if bottom_action == "avoid_top":
+                    pick = s.drop(s.nlargest(top_n).index)
+                elif bottom_action == "low_groups":
+                    pick = s.nsmallest(max(int(len(s) * 0.4), top_n))
+                else:
+                    pick = s.nsmallest(top_n)
             else:
                 pick = s  # 等权全部
             new_holdings = pick.index.tolist()
@@ -155,9 +136,8 @@ def adaptive_rotation(score_df: pd.DataFrame, board_close: pd.DataFrame,
             holdings = new_holdings
             current_weights = target_weights
             regime_log.append({
-                "date": dt, "ic": ic_mean, "direction": direction,
-                "raw_direction": raw_dir[dt],
-                "vol_gate": vol_gate, "guard_hit": guard_hit,
+                "date": dt, **decision.to_dict(), "ic": decision["ic_mean"],
+                "n_holdings": len(new_holdings),
             })
         nav_series[dt] = nav
         bench_series[dt] = bench_nav
@@ -184,6 +164,14 @@ def seg_ret(nav: pd.Series, start: str) -> float:
     return sub.iloc[-1] / sub.iloc[0] - 1
 
 
+def adaptive_parameters(regime_config: dict) -> dict:
+    """把共用判定参数适配到轮动接口，保留原有函数的 guard/confirm 名称。"""
+    parameters = backtest.regime_parameters(regime_config)
+    parameters["guard"] = parameters.pop("guard_threshold")
+    parameters["confirm"] = regime_config.get("confirm_readings", 1)
+    return parameters
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="regime 自适应轮动的预注册配置验证")
     ap.add_argument("--research-grid", action="store_true",
@@ -191,7 +179,7 @@ def main() -> None:
     args = ap.parse_args()
     cfg = pipeline.load_config()
     print("[1/4] 准备数据（缓存口径，无网络）...")
-    data = pipeline.prepare(cfg, end_override=pipeline.cache_end_date(cfg))
+    data = pipeline.prepare(cfg, end_override=pipeline.cache_end_date(cfg), offline=True)
 
     print("[2/4] 计算因子与情绪分 ...")
     factors = compute_all_factors(data["stock_daily"], data["board_map"],
@@ -209,8 +197,6 @@ def main() -> None:
     horizon = int(regime_cfg.get("horizon", 5))
     ic_s = daily_ic_series(smoothed, board_close, horizon=horizon)
     ic_known = ic_known_series(ic_s, board_close.index, lag=horizon)
-    vol_window = int(regime_cfg.get("vol_window", VOL_WINDOW))
-    vol = board_close.pct_change().mean(axis=1).rolling(vol_window).std()
 
     print("[4/4] 回测（网格 + 对照）...")
     top_n = cfg["signal"].get("top_n", 3)
@@ -224,22 +210,8 @@ def main() -> None:
                                               top_n=top_n, cost_bps=cost_bps,
                                               direction="bottom")
 
-    eq_ret = board_close.pct_change().mean(axis=1)
-    guard_days = int(regime_cfg.get("guard_days", 10))
-    mkt_guard = eq_ret.rolling(guard_days).sum()
-
     # 默认只验证 config.yaml 中预先声明的策略，避免样本内“跑完后选最佳”。
-    configured_kw = {
-        "ic_window": int(regime_cfg.get("ic_window", IC_WINDOW_DEFAULT)),
-        "threshold": float(regime_cfg.get("threshold", THRESHOLD_DEFAULT)),
-        "min_obs": int(regime_cfg.get("min_obs", 10)),
-        "mkt_ret": mkt_guard,
-        "guard": regime_cfg.get("guard_threshold", -0.03),
-        "confirm": int(regime_cfg.get("confirm_readings", 1)),
-    }
-    if regime_cfg.get("vol_threshold") is not None:
-        configured_kw.update({"vol_series": vol,
-                              "vol_threshold": float(regime_cfg["vol_threshold"])})
+    configured_kw = adaptive_parameters(regime_cfg)
     variants = [("configured", configured_kw)]
     if args.research_grid:
         # 研究网格只生成下一轮候选假设，不能覆盖 production 配置。
@@ -284,9 +256,15 @@ def main() -> None:
         rule_txt += (f"方向确认迟滞：非观望方向需连续 {configured_kw['confirm']} 次"
                      "调仓判定同向才生效，未确认期间观望；风控闸门即时生效。")
     rule_txt += f"周度调仓，单边 100% 换手成本 {cost_bps:g}bps。"
+    rule_txt += (f" IC 稳健性闸门={configured_kw['require_robust_signal']}，"
+                 f"单调性预警={configured_kw['mono_days']} 日；与日报共用 regime_state。")
     lines += [f"回测区间：{d0:%Y-%m-%d} ~ {d1:%Y-%m-%d}（含 "
                f"{len(base['nav'])} 个交易日，前段为 IC 预热期，期间等权观望）",
               "", rule_txt, ""]
+    audit = data["calendar_audit"]
+    lines += [f"交易日口径：个股缓存实际 A 股交易日；过滤 "
+              f"{len(audit['removed_dates'])} 个非 A 股交易日、"
+              f"{audit['removed_board_rows']} 行板块数据；未改动策略参数。", ""]
 
     heading = ("## 研究网格（仅生成候选假设，不可据此上线）"
                if args.research_grid else "## 预注册配置验证（未做参数选择）")
@@ -340,6 +318,10 @@ def main() -> None:
                 gate.append("波动")
             if r.get("guard_hit"):
                 gate.append("回撤")
+            if r.get("robust_gate"):
+                gate.append("IC稳健性")
+            if r.get("mono_gate"):
+                gate.append("单调性破坏")
             lines.append(f"| {r['date']:%Y-%m-%d} | {ic_txt} | {arrow} "
                          f"| {'+'.join(gate)} |")
 
@@ -362,6 +344,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"regime_adaptive_backtest_{pd.Timestamp.today():%Y%m%d}.md"
     path.write_text(md, encoding="utf-8")
+    rec["regime_log"].to_csv(path.with_suffix(".csv"), index=False, encoding="utf-8-sig")
     print(f"\n已保存：{path}")
 
 

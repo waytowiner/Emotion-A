@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 from emotion import backtest, leaders, pipeline, score, signal
 from emotion.data import quotes
 from emotion.factors import compute_all_factors
+from emotion.project_status import project_status
 
 OUT_DIR = ROOT / "data" / "dashboard"
 BACKTEST_WINDOW_FALLBACK = 180
@@ -160,7 +161,7 @@ def main() -> None:
     cfg = pipeline.load_config()
 
     print("[1/6] 准备数据（读取本地缓存）...")
-    data = pipeline.prepare(cfg, offline=True)
+    data = pipeline.prepare(cfg, offline=True, end_override=pipeline.cache_end_date(cfg))
     board_names: dict = data["board_names"]
 
     print("[2/6] 计算情绪因子 ...")
@@ -211,22 +212,8 @@ def main() -> None:
 
     # 风格判定（regime 自适应）：滚动已实现 IC + 回撤护栏 -> 方向建议
     regime_cfg = cfg.get("regime", {})
-    regime = backtest.regime_state(
-        smoothed, board_close,
-        ic_window=regime_cfg.get("ic_window", 15),
-        threshold=regime_cfg.get("threshold", 0.02),
-        horizon=regime_cfg.get("horizon", 5),
-        min_obs=regime_cfg.get("min_obs", 10),
-        guard_days=regime_cfg.get("guard_days", 10),
-        guard_threshold=regime_cfg.get("guard_threshold", -0.03),
-        vol_window=regime_cfg.get("vol_window", 20),
-        vol_threshold=regime_cfg.get("vol_threshold"),
-        require_robust_signal=regime_cfg.get("require_robust_signal", False),
-        robust_ic_window=regime_cfg.get("robust_ic_window", 60),
-        robust_bootstrap_samples=regime_cfg.get("robust_bootstrap_samples", 500),
-        mono_days=regime_cfg.get("mono_days"),
-    )
-    regime["mono_days"] = regime_cfg.get("mono_days")
+    regime = backtest.regime_snapshot(smoothed, board_close, regime_cfg,
+                                      top_n=sig_cfg.get("top_n", 3))
 
     signals_named = {}
     for key in ["heating", "cooling", "hot", "cold", "bottom_reversal",
@@ -242,6 +229,7 @@ def main() -> None:
 
     dump_json("latest.json", {
         "date": latest_date,
+        "project_status": project_status(),
         "board_source": cfg.get("board_source", "eastmoney"),
         "n_boards": int(smoothed.shape[1]),
         "universe": data.get("universe"),
@@ -372,6 +360,7 @@ def main() -> None:
                                      "horizon": HEALTH_HORIZON, "series": hs})
 
     dump_json("meta.json", {
+        "calendar_audit": data["calendar_audit"],
         "generated_at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
         "elapsed_sec": round(time.time() - t0, 1),
         "board_source": cfg.get("board_source", "eastmoney"),

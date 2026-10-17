@@ -72,7 +72,7 @@ function etfPills(etfs) {
 }
 const firstEtfCode = item => (item.etf && item.etf.length) ? item.etf[0].code : null;
 
-/* 龙头股：无 ETF 板块的替代可操作标的 */
+/* 龙头股：无 ETF 板块的成分观察信息 */
 function leadersOf(code) {
   const l = state.overview && state.overview.latest && state.overview.latest.leaders;
   return l ? l[code] : null;
@@ -139,12 +139,12 @@ const TOOLTIP_STYLE = {
 const SIG_META = {
   heating:   { title: '升温榜',  cls: 'sig-heating', desc: '情绪分连续 3 天上升，趋势正在抬升' },
   cooling:   { title: '降温榜',  cls: 'sig-cooling', desc: '情绪分连续 3 天下降，趋势正在降温' },
-  hot:       { title: '亢奋区',  cls: 'sig-hot',     desc: '情绪处于自身历史 90% 以上，不宜追高' },
-  cold:      { title: '冰点区',  cls: 'sig-cold',    desc: '情绪处于自身历史 10% 以下，留意反转机会' },
+  hot:       { title: '亢奋区',  cls: 'sig-hot',     desc: '情绪处于自身历史 90% 以上，仅作状态观察' },
+  cold:      { title: '冰点区',  cls: 'sig-cold',    desc: '情绪处于自身历史 10% 以下，仅作状态观察' },
   switching: { title: '切换预警', cls: 'sig-switch',  desc: '前期领涨板块降温、低位板块升温，热点可能正在切换' },
-  bottom_reversal: { title: '底部反转预警', cls: 'sig-cold', desc: '冰点且成交额价格代理异常，仅作候选观察' },
-  extreme_hot: { title: '顺势加速度', cls: 'sig-hot', desc: '亢奋且单因子极端，动量市的辅助信号' },
-  extreme_cold: { title: '极端冷区异动', cls: 'sig-cold', desc: '冰点且单因子极端，需结合风格判断' },
+  bottom_reversal: { title: '冷区代理异动', cls: 'sig-cold', desc: '冰点且成交额价格代理异常，仅作观察' },
+  extreme_hot: { title: '极端热区异动', cls: 'sig-hot', desc: '亢奋且单因子极端，仅作状态观察' },
+  extreme_cold: { title: '极端冷区异动', cls: 'sig-cold', desc: '冰点且单因子极端，仅作状态观察' },
   fund_emotion_divergence: { title: '代理-情绪背离', cls: 'sig-switch', desc: '成交额×涨跌幅连续为正，不是真实资金净流入' },
 };
 const BADGE_NAME = { heating: '升温', cooling: '降温', hot: '亢奋', cold: '冰点', switching_from: '切换' };
@@ -190,12 +190,14 @@ function renderHealthLamp() {
   const dot = $('#lamp-dot'), txt = $('#lamp-text');
   $('#health-lamp').style.display = 'flex';
   let level, text;
-  if (h.ic_mean >= 0.03 && h.ic_win_rate >= 0.55) {
-    level = 'g'; text = '信号有效，可以顺势参考';
+  if (h.ic_mean == null) {
+    level = 'y'; text = '观察模式 · 历史相关性数据不足';
+  } else if (h.ic_mean >= 0.03 && h.ic_win_rate >= 0.55) {
+    level = 'g'; text = '观察模式 · 历史排序相关为正';
   } else if (h.ic_mean >= 0) {
-    level = 'y'; text = '信号偏弱，参考时打个折扣';
+    level = 'y'; text = '观察模式 · 历史排序相关较弱';
   } else {
-    level = 'r'; text = '信号正在失效，建议观望';
+    level = 'r'; text = '观察模式 · 历史排序相关为负';
   }
   dot.className = 'lamp-dot ' + level;
   txt.textContent = text;
@@ -203,15 +205,15 @@ function renderHealthLamp() {
   // 分层价差 Q5−Q1：区分"信号反"（<0，单调倒置）与"信号死"（≈0，无结构）
   if (h.spread_mean != null && isFinite(h.spread_mean)) {
     sub += ` · 价差Q5-Q1 ${(h.spread_mean * 100).toFixed(2)}%` +
-           (h.spread_mean < 0 ? '（倒置：信号反）' : '');
+           (h.spread_mean < 0 ? '（该样本低分组相对占优）' : '');
   }
-  // 风格判定（regime 自适应）：方向建议 + 风控闸门
+  // 旧模型方向与闸门只作为历史研究读数。
   const rg = state.overview.latest.regime;
   if (rg) {
     const dirMeta = {
-      top: '风格判定：动量市 → 榜单顺势使用',
-      bottom: '风格判定：反转市 → 榜单反向使用（Top=回避，Bottom=关注）',
-      neutral: '风格判定：观望 → 不做方向性轮动',
+      top: '旧模型读数：正向（仅观察）',
+      bottom: '旧模型读数：反向（仅观察）',
+      neutral: '旧模型读数：中性（仅观察）',
     };
     const gates = [];
     if (rg.guard_hit) gates.push('回撤护栏');
@@ -220,6 +222,11 @@ function renderHealthLamp() {
     if (rg.mono_gate) gates.push('单调性破坏');
     const gateTxt = gates.length ? `（${gates.join('+')}触发）` : '';
     sub += ` · ${dirMeta[rg.direction] || dirMeta.neutral}${gateTxt}`;
+    if (rg.rebalance_date) {
+      const execution = { top: '正向', bottom: '反向', neutral: '中性' };
+      sub += ` · 最近研究信号 ${rg.rebalance_date}：${execution[rg.rebalance_direction] || '中性'}` +
+             `（连续${rg.confirm_readings}次周度确认）`;
+    }
   }
   $('#lamp-sub').textContent = sub;
 }
@@ -442,7 +449,7 @@ function renderIcChart() {
         silent: true, symbol: 'none',
         data: [{ yAxis: 0, lineStyle: { color: '#8b949e', type: 'dashed' } },
                { yAxis: 0.03, lineStyle: { color: GOLD, type: 'dotted' },
-                 label: { formatter: '0.03 有效线', color: GOLD, fontSize: 10 } }],
+                 label: { formatter: '0.03 参考线（非显著性）', color: GOLD, fontSize: 10 } }],
       },
     }],
   }, true);
@@ -474,7 +481,7 @@ function renderQuantChart() {
 
 const ROT_META = [
   ['top', () => `追涨：${FREQ_LABEL[state.btFreq]}买前 ${state.btTopN} 名`, UP],
-  ['bottom', () => `抄底：${FREQ_LABEL[state.btFreq]}买后 ${state.btTopN} 名`, DOWN],
+  ['bottom', () => `历史模拟：${FREQ_LABEL[state.btFreq]}持有后 ${state.btTopN} 名`, DOWN],
   ['avoid_top', () => `回避亢奋：买除前 ${state.btTopN} 名外全部`, GOLD],
 ];
 function renderNavChart() {

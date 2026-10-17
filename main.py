@@ -16,12 +16,13 @@ from emotion.factors import compute_all_factors
 def main() -> None:
     ap = argparse.ArgumentParser(description="A股板块情绪日报")
     ap.add_argument("--refresh-boards", action="store_true", help="强制刷新板块列表与成分")
+    ap.add_argument("--offline", action="store_true", help="仅使用现有缓存复算日报")
     args = ap.parse_args()
 
     cfg = pipeline.load_config()
     print("[1/4] 准备数据 ...")
     data = pipeline.prepare(cfg, refresh_boards=args.refresh_boards,
-                            end_override=pipeline.cache_end_date(cfg))
+                            end_override=pipeline.cache_end_date(cfg), offline=args.offline)
     print(f"      板块 {data['board_map']['board_code'].nunique()} 个，"
           f"个股 {data['stock_daily']['code'].nunique()} 只，"
           f"日线 {len(data['stock_daily'])} 行")
@@ -57,24 +58,8 @@ def main() -> None:
     health = _bt.recent_signal_health(smoothed, board_close, days=60)
     # 风格判定（regime 自适应）：滚动已实现 IC + 回撤护栏 -> 方向建议
     regime_cfg = cfg.get("regime", {})
-    regime = _bt.regime_state(
-        smoothed, board_close,
-        ic_window=regime_cfg.get("ic_window", 15),
-        threshold=regime_cfg.get("threshold", 0.02),
-        horizon=regime_cfg.get("horizon", 5),
-        min_obs=regime_cfg.get("min_obs", 10),
-        guard_days=regime_cfg.get("guard_days", 10),
-        guard_threshold=regime_cfg.get("guard_threshold", -0.03),
-        vol_window=regime_cfg.get("vol_window", 20),
-        vol_threshold=regime_cfg.get("vol_threshold"),
-        require_robust_signal=regime_cfg.get("require_robust_signal", False),
-        robust_ic_window=regime_cfg.get("robust_ic_window", 60),
-        robust_bootstrap_samples=regime_cfg.get("robust_bootstrap_samples", 500),
-        mono_days=regime_cfg.get("mono_days"),
-    )
-    regime["ic_window"] = regime_cfg.get("ic_window", 15)
-    regime["guard_days"] = regime_cfg.get("guard_days", 10)
-    regime["mono_days"] = regime_cfg.get("mono_days")
+    regime = _bt.regime_snapshot(smoothed, board_close, regime_cfg,
+                                 top_n=sig_cfg.get("top_n", 3))
     # 因子层监控：逐因子 IC + 方向可信度（区分"可信为负"与"风格切换"）
     factor_ic = _bt.factor_ic_snapshot(factors, board_close)
     date = smoothed.index[-1]
@@ -85,6 +70,9 @@ def main() -> None:
                               factor_ic=factor_ic)
     md_path, csv_path = report.save_report(
         ROOT / cfg["paths"]["report_dir"], date, md, smoothed, data["board_names"])
+    # 前瞻预注册台账：事前判定留痕（同日重跑幂等跳过）
+    report.append_prospective_log(
+        ROOT / cfg["paths"]["report_dir"], date, regime, health)
     print(f"完成：{md_path}")
     print(f"      {csv_path}")
 

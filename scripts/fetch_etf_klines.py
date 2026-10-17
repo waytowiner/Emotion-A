@@ -6,7 +6,9 @@
 
 from __future__ import annotations
 
-import re
+import argparse
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import socket
 import sys
 import time
@@ -23,6 +25,22 @@ START = "2025-01-01"  # 覆盖 180 回测窗口 + 120 平滑 + 缓冲
 END = pd.Timestamp.today().strftime("%Y-%m-%d")
 
 socket.setdefaulttimeout(15)
+
+
+def _last_closed_trade_date() -> str:
+    """最近一个已收盘的交易日（近似：跳过周末；15:00 前视为昨日）。
+
+    用于 K 线"已最新"判断：盘中运行时缓存到上一交易日即算最新，
+    不再全量重发请求（此前用 >= 今天判断，盘中任何重跑都会把全部
+    ETF 重新请求一遍）。法定节假日未剔除：多抓一次空数据无害。
+    """
+    t = pd.Timestamp.now()
+    if t.hour < 15:
+        t -= pd.Timedelta(days=1)
+    d = t.normalize()
+    while d.weekday() >= 5:
+        d -= pd.Timedelta(days=1)
+    return d.strftime("%Y-%m-%d")
 
 
 def _tx_code(code6: str) -> str:
@@ -56,39 +74,63 @@ def fetch_etf_kline(code6: str, start: str, end: str) -> pd.DataFrame:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--start", default=START)
+    ap.add_argument("--end", default=None, help="明确指定已收盘的数据截止日")
+    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--force", action="store_true")
+    args = ap.parse_args()
+    done_date = min(args.end or _last_closed_trade_date(), _last_closed_trade_date())
     m = pd.read_parquet(CACHE / "etf_trading_map.parquet")
-    print(f"交易标的 ETF: {len(m)}", flush=True)
-    ok = fail = 0
-    consec = 0
-    for _, row in m.iterrows():
-        code = row["etf_code"]
+    codes = sorted(set(m["etf_code"].astype(str)) | {"510300"})
+    print(f"交易标的 ETF + 沪深300基准: {len(codes)}; 截止 {done_date}", flush=True)
+
+    def refresh(code):
         p = CACHE / f"etf_kline_{code}.parquet"
-        if p.exists():
-            old = pd.read_parquet(p)
-            if str(old["date"].max())[:10] >= END:
-                ok += 1
-                continue
-        else:
-            old = None
-        if consec >= 8:
-            print(f"连续 {consec} 次失败，中止（可断点续跑）", flush=True)
-            break
+        old = pd.read_parquet(p) if p.exists() else None
+        if (not args.force and old is not None
+                and str(old["date"].max())[:10] >= done_date):
+            return {"etf_code": code, "status": "cached", "rows": len(old),
+                    "last_date": str(old["date"].max())[:10]}
         try:
-            k = fetch_etf_kline(code, START, END)
+            k = fetch_etf_kline(code, args.start, done_date)
+            # 盘中抓到的当日 K 线是动态值：不落缓存，等收盘后
+            # （done_date=今天）再补全，否则盘中残值会被"已最新"判断永久保留
+            k = k[k["date"].between(pd.Timestamp(args.start), pd.Timestamp(done_date))]
+            if k.empty or k[["open", "close", "high", "low"]].isna().any().any():
+                raise RuntimeError("无可用K线或价格缺失")
+            if (k[["open", "close", "high", "low"]] <= 0).any().any():
+                raise RuntimeError("非正价格")
             if old is not None:
+                # 全区间重新复权；不混拼区间内的旧复权基准。
+                old = old[old["date"] < pd.Timestamp(args.start)]
                 k = (pd.concat([old, k], ignore_index=True)
                      .drop_duplicates(subset=["date"], keep="last")
                      .sort_values("date").reset_index(drop=True))
+            if k.empty:
+                raise RuntimeError("无可用K线")
             k.to_parquet(p, index=False)
-            ok += 1
-            consec = 0
-            print(f"kline {row['etf_name']}({code}): {len(k)}", flush=True)
+            return {"etf_code": code, "status": "updated", "rows": len(k),
+                    "last_date": str(k["date"].max())[:10]}
         except Exception as exc:  # noqa: BLE001
-            fail += 1
-            consec += 1
-            print(f"kline {code} FAIL: {exc}", flush=True)
-        time.sleep(0.3)
-    print(f"DONE etf kline ok={ok} fail={fail}", flush=True)
+            return {"etf_code": code, "status": "failed", "error": str(exc)}
+
+    results = []
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        for future in as_completed([pool.submit(refresh, code) for code in codes]):
+            row = future.result()
+            results.append(row)
+            print(f"[{len(results)}/{len(codes)}] {row}", flush=True)
+    manifest = {"source": "Tencent ifzq fqkline (qfqday or day)",
+                "fetched_at": pd.Timestamp.now().isoformat(),
+                "start": args.start, "end": done_date,
+                "results": sorted(results, key=lambda r: r["etf_code"])}
+    (CACHE / "etf_fetch_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    fail = sum(r["status"] == "failed" for r in results)
+    print(f"DONE etf kline ok={len(results)-fail} fail={fail}", flush=True)
+    if fail:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
