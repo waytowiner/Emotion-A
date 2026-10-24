@@ -200,6 +200,8 @@ a { color: var(--accent); text-decoration: none; }
 /* ---------- 图表 ---------- */
 .chart { width: 100%; }
 #chart-diverge { height: 520px; }
+#chart-dual { height: 420px; }
+#chart-board-policy { height: 260px; }
 #chart-ic { height: 300px; }
 #chart-quant { height: 300px; }
 #chart-nav { height: 420px; }
@@ -229,6 +231,13 @@ tbody tr:hover {
 .badge-hot { color: var(--gold); border-color: var(--gold); }
 .badge-cold { color: var(--accent); border-color: var(--accent); }
 .badge-switching_from { color: var(--purple); border-color: var(--purple); }
+/* 双因状态徽章（政策支柱，观察层） */
+.badge-resonance { color: #ff9f43; border-color: #ff9f43; }
+.badge-lurking { color: #54a0ff; border-color: #54a0ff; }
+.badge-funds_first { color: var(--gold); border-color: rgba(240,185,11,.6); }
+.badge-dual_cold { color: var(--text-faint); border-color: var(--text-faint); }
+.dual-legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--text-dim); margin: 2px 0 8px; }
+.dual-legend i { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:5px; vertical-align:-1px; }
 .pct-bar { position: relative; width: 90px; height: 8px; background: rgba(255,255,255,.06); border-radius: 5px; display: inline-block; vertical-align: middle; margin-right: 8px; overflow: hidden; }
 .pct-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; }
 
@@ -371,6 +380,42 @@ tbody tr:hover {
   <!-- ============ Tab1 今日榜单 ============ -->
   <section class="tab-page active" id="page-today">
     <div class="grid grid-5" id="sig-cards"></div>
+
+    <!-- 政策（时政）支柱：双因矩阵 + 政策热度榜（观察层） -->
+    <div class="grid grid-2" id="policy-grid" style="display:none">
+      <div class="card">
+        <h3>双因状态矩阵<span class="hint">X=情绪分位，Y=政策分位（各自历史 120 天的位置）；点一个气泡进入板块详情</span><button class="help-btn" data-help="help-dual" title="双因矩阵是什么">?</button></h3>
+        <div class="help-panel" id="help-dual">
+          <div class="row"><b>四个象限是什么：</b>横轴是<b>情绪分位</b>（资金人气，右=热），纵轴是<b>政策分位</b>（新闻联播提及强度，上=热）。每个点是一个板块，落在哪个象限就有对应的双因状态。</div>
+          <div class="row"><b>右上=政策共振：</b>情绪热＋政策也热——题材同时有资金关注和政策/时政话题加持，是观察的重点象限。</div>
+          <div class="row"><b>左上=政策潜伏：</b>政策/时政热度高但盘面情绪还冷——政策已至、资金未动，仅记录这种"潜伏"状态。</div>
+          <div class="row"><b>右下=资金先行：</b>情绪热但政策冷——纯资金驱动、没有时政话题背书，观察其退潮风险。</div>
+          <div class="row"><b>最重要：</b>象限只是"两个温度计各自的读数"，<b>不是买卖信号</b>。政策分统计的是新闻联播的<b>提及强度</b>，不区分利好利空；共振≠买入、潜伏≠布局。</div>
+        </div>
+        <div id="chart-dual" class="chart"></div>
+      </div>
+      <div class="card">
+        <h3>政策热度榜<span class="hint">新闻联播提及强度口径的观察榜</span><button class="help-btn" data-help="help-policy-rank" title="政策分怎么算">?</button></h3>
+        <div class="help-panel" id="help-policy-rank">
+          <div class="row"><b>政策分是什么：</b>每天央视《新闻联播》的文字稿里，统计各板块关键词（如"半导体""低空经济"）被多少条新闻提及，再和全市场横截面比较、5 日平滑——衡量<b>政策/时政话题对该板块的提及热度</b>。</div>
+          <div class="row"><b>当日命中：</b>当天联播里直接命中该板块关键词的新闻条数（含周末并入）。</div>
+          <div class="row"><b>注意：</b>提及≠利好。被联播提及可能是正面政策，也可能是风险事件；本榜只记录"被谈及的强度"，不解读方向，也不构成建议。</div>
+        </div>
+        <div class="table-wrap" style="max-height:320px">
+          <table id="policy-rank-table">
+            <thead><tr>
+              <th class="l">排名</th>
+              <th class="l">板块</th>
+              <th class="sortable" data-sort="score">政策分 <span class="sort-mark"></span></th>
+              <th class="sortable" data-sort="pct">时序分位 <span class="sort-mark"></span></th>
+              <th class="l">当日命中</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="legend-note" id="policy-note"></div>
+      </div>
+    </div>
 
     <div class="card">
       <h3>情绪分排名<span class="hint">左绿右红，越长代表情绪越极端；点击板块名可看详情</span><button class="help-btn" data-help="help-rank" title="情绪分是什么">?</button></h3>
@@ -530,6 +575,17 @@ tbody tr:hover {
         <div class="row"><b>注意：</b>分位高 ≠ 一定会跌，只是"已经很热"；分位低 ≠ 一定会涨，只是"已经冷透"。要结合顶栏的风格判定一起用。</div>
       </div>
       <div id="chart-board-pct" class="chart"></div>
+    </div>
+
+    <div class="card" id="board-policy-card" style="display:none">
+      <h3>政策热度（双因支柱）<span class="hint" id="board-policy-hint">新闻联播提及强度口径；与情绪分完全独立的另一条线</span><button class="help-btn" data-help="help-board-policy" title="这条线是什么">?</button></h3>
+      <div class="help-panel" id="help-board-policy">
+        <div class="row"><b>政策分：</b>该板块在新闻联播文字稿中的关键词提及强度（横截面标准化后 5 日平滑），口径与首页政策热度榜一致。</div>
+        <div class="row"><b>双因状态：</b>把该板块的情绪分位与政策分位放在一张图上看——政策先起来而情绪还冷，就是"政策潜伏"；两条线都热就是"政策共振"。</div>
+        <div class="row"><b>老规矩：</b>提及≠利好，共振≠买入，潜伏≠布局时机；仅观察。</div>
+      </div>
+      <div id="board-policy-badges"></div>
+      <div id="chart-board-policy" class="chart"></div>
     </div>
 
     <h3 style="margin: 4px 0 12px">最新因子体检<span class="hint" style="color:var(--text-faint);font-size:12px;font-weight:400">构成情绪分的 6 个原材料（<span id="factor-date"></span>）</span><button class="help-btn" data-help="help-factors" title="怎么读这些卡片">?</button></h3>

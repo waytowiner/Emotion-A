@@ -16,7 +16,9 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
                  regime: dict | None = None,
                  breakthrough: dict | None = None,
                  universe: dict | None = None,
-                 factor_ic: pd.DataFrame | None = None) -> str:
+                 factor_ic: pd.DataFrame | None = None,
+                 policy: dict | None = None,
+                 board_names_for_policy: dict[str, str] | None = None) -> str:
     """生成当日 Markdown 报告文本。board_names: board_code -> 名称。
 
     health: recent_signal_health 的输出（最近 N 日 IC 监控），可选。
@@ -24,6 +26,8 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
     breakthrough: signal.breakthrough 配置，用于让报告阈值与实际信号判定一致。
     universe: {"board_source": ..., "n_boards": ...}，用于在报告头标注板块口径。
     factor_ic: backtest.factor_ic_snapshot 的输出（逐因子 IC 与可信度），可选。
+    policy: 政策（时政）支柱载荷（main._policy_payload 输出），可选；
+    缺省时报告不含政策段（政策层不阻断主线）。
     """
     last_score = smoothed.iloc[-1].dropna().sort_values(ascending=False)
     last_pct = pct.iloc[-1]
@@ -187,6 +191,60 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
                      f"report/factor_adaptive_*.md。"]
         factor_txt = "\n".join(rows)
 
+    # ---- 政策（时政）支柱：与情绪支柱完全平行的观察层 ----
+    policy_txt = ""
+    if policy is not None:
+        from emotion.policy import DUAL_STATE_CN
+        p_smoothed = policy["smoothed"]
+        p_pct = policy["pct"]
+        p_names = board_names_for_policy or board_names
+        last_pscore = p_smoothed.iloc[-1].dropna().sort_values(ascending=False)
+        last_ppct = p_pct.iloc[-1] if not p_pct.empty else pd.Series(dtype=float)
+        last_intensity = policy.get("intensity")
+        # 政策热度 Top 10（观察榜，无任何买卖解读）
+        top_p = last_pscore.head(10)
+        rows = ["| 排名 | 板块 | 政策分 | 时序分位 | 当日命中 |", "|---|---|---|---|---|"]
+        for i, c in enumerate(top_p.index, 1):
+            pv = last_ppct.get(c)
+            ptxt = f"{pv:.0%}" if pd.notna(pv) else "—"
+            hits = (f"{int(last_intensity[c])}" if last_intensity is not None
+                    and pd.notna(last_intensity.get(c)) else "—")
+            rows.append(f"| {i} | {p_names.get(c, c)} | {last_pscore[c]:+.2f} "
+                        f"| {ptxt} | {hits} |")
+        sig = policy.get("signals") or {}
+        def _fmt_policy_list(key):
+            items = sig.get(key) or []
+            if not items:
+                return "（无）"
+            return "、".join(p_names.get(c, c) for c in items[:10])
+        n_res = len(sig.get("policy_resonance") or [])
+        n_lurk = len(sig.get("policy_lurking") or [])
+        policy_txt = f"""## 政策（时政）观察
+
+> 数据口径：央视新闻联播文字稿（{policy.get('news_days', '?')} 天缓存，截至 {policy.get('news_end', '?')}）；
+> 关键词词典 {policy.get('n_keyword_boards', '?')} 个板块，纯字符串匹配。
+> 政策分 = 当日命中条数 / 近 5 日滚动热度 / 近 10 日政策广度三口径的横截面标准化合成，
+> 与情绪分同 5 日平滑、同 120 日时序分位。**命中是"提及强度"的客观计数，
+> 不代表政策利好或利空方向**；本段为观察层，不构成任何买卖建议。
+""" + ("" if policy.get("fresh", True) else """
+> ⚠️ **缓存缺口提示**：联播缓存末日与情绪数据末日相差超过 3 天，
+> 本段政策读数滞后于盘面（当日命中列不展示）。请运行
+> `python scripts/fetch_cctv_news.py` 补齐后再解读本段。
+""") + f"""
+### 政策热度榜（Top 10，仅观察）
+
+{chr(10).join(rows)}
+
+### 双因交叉信号（情绪分位 × 政策分位，阈值 80%/20%）
+
+- **{DUAL_STATE_CN['resonance']}**（{n_res} 个）：{_fmt_policy_list('policy_resonance')}
+- **{DUAL_STATE_CN['lurking']}**（{n_lurk} 个）：{_fmt_policy_list('policy_lurking')}
+
+> 双因状态仅描述"情绪与政策各自处于自身历史分位的相对位置"，与已冻结的
+> 旧模型方向判定完全解耦；情绪热+政策热不等于买入信号，情绪冷+政策热
+> 不等于布局时机。政策支柱不参与任何回测调参与重启门槛判定。
+"""
+
     md = f"""# A股板块情绪日报 {date:%Y-%m-%d}
 
 > **观察模式**：{OBSERVATION_NOTICE}
@@ -202,6 +260,8 @@ def build_report(date: pd.Timestamp, smoothed: pd.DataFrame, pct: pd.DataFrame,
 {regime_txt}
 
 {factor_txt}
+
+{policy_txt}
 
 ## 信号
 

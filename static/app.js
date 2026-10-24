@@ -161,7 +161,7 @@ const FACTOR_ORDER = ['limit_up_strength', 'money_effect', 'breadth', 'rps', 'tu
 
 /* ---------------- 全局状态 ---------------- */
 const state = {
-  overview: null, backtest: null, health: null,
+  overview: null, backtest: null, health: null, policy: null,
   boards: {},          // code -> board detail
   currentBoard: null,
   btWindow: null,      // 回测页当前选中的窗口（交易日数）
@@ -363,9 +363,115 @@ async function loadToday() {
     `数据日期：${state.overview.latest.date}（${universeText}，更新于 ${meta.generated_at}）`;
   renderHealthLamp();
   renderSignalCards();
+  renderPolicy();
   renderDiverge();
   renderRankTable();
   state.loaded.today = true;
+}
+
+/* ---------------- 政策（时政）支柱：双因矩阵 + 政策榜 ---------------- */
+const STATE_COLOR = {
+  resonance: '#ff9f43',   // 情绪热+政策热：橙金
+  lurking: '#54a0ff',     // 情绪冷+政策热：蓝
+  funds_first: '#f0b90b', // 情绪热+政策冷：金
+  dual_cold: '#6e7681',   // 双冷：灰
+  neutral: '#8b949e',     // 中性：暗灰
+};
+const STATE_SHORT = {
+  resonance: '政策共振', lurking: '政策潜伏', funds_first: '资金先行',
+  dual_cold: '双冷', neutral: '中性',
+};
+
+async function renderPolicy() {
+  try {
+    state.policy = await api('/api/policy');
+  } catch (e) { return; }
+  if (!state.policy || !state.policy.available) {
+    $('#policy-grid').style.display = 'none';
+    return;
+  }
+  $('#policy-grid').style.display = '';
+  renderDualMatrix();
+  renderPolicyRankTable();
+}
+
+function renderDualMatrix() {
+  const pts = state.policy.scatter || [];
+  const chart = getChart('chart-dual');
+  // 四象限背景分区线（80% / 20% 阈值）
+  const q = { hot: 0.8, cold: 0.2 };
+  const mk = (state, inGroup) => ({
+    name: STATE_SHORT[state],
+    type: 'scatter',
+    data: pts.filter(p => (p.state || 'neutral') === state)
+             .map(p => [p.emotion_pct, p.policy_pct, p]),
+    symbolSize: d => 10 + Math.max(0, (d[2].hits || 0)) * 3,
+    itemStyle: { color: STATE_COLOR[state], opacity: inGroup ? .92 : .55 },
+    emphasis: { itemStyle: { opacity: 1, borderColor: '#fff', borderWidth: 1 } },
+  });
+  chart.setOption({
+    animationDuration: 600,
+    legend: {
+      bottom: 0, textStyle: { color: '#8b949e', fontSize: 11 },
+      data: ['政策共振', '政策潜伏', '资金先行', '双冷', '中性'],
+    },
+    grid: { left: 44, right: 20, top: 14, bottom: 42 },
+    tooltip: {
+      ...TOOLTIP_STYLE, trigger: 'item',
+      formatter: p => {
+        const d = p.data[2];
+        const etf = d.etf && d.etf.length ? `<br>对应ETF：<b style="color:${GOLD}">${d.etf[0].code} ${d.etf[0].name}</b>` : '';
+        return `<b>${d.name}</b><br>双因状态：<b style="color:${STATE_COLOR[d.state] || '#8b949e'}">${STATE_SHORT[d.state] || '中性'}</b>` +
+               `<br>情绪分位：${fmtPct(d.emotion_pct)}<br>政策分位：${fmtPct(d.policy_pct)}` +
+               (d.hits != null ? `<br>当日联播命中：${d.hits} 条` : '') + etf;
+      },
+    },
+    xAxis: {
+      type: 'value', min: 0, max: 1, name: '情绪分位', nameTextStyle: { color: '#8b949e' },
+      ...AXIS_STYLE,
+      axisLabel: { color: '#8b949e', formatter: v => (v * 100).toFixed(0) + '%' },
+      splitLine: { ...AXIS_STYLE.splitLine, show: true },
+      markLine: {
+        silent: true, symbol: 'none', lineStyle: { color: 'rgba(255,255,255,.14)', type: 'dashed' },
+        data: [{ xAxis: q.hot }, { xAxis: q.cold }],
+      },
+    },
+    yAxis: {
+      type: 'value', min: 0, max: 1, name: '政策分位', nameTextStyle: { color: '#8b949e' },
+      ...AXIS_STYLE,
+      axisLabel: { color: '#8b949e', formatter: v => (v * 100).toFixed(0) + '%' },
+      splitLine: { ...AXIS_STYLE.splitLine, show: true },
+      markLine: {
+        silent: true, symbol: 'none', lineStyle: { color: 'rgba(255,255,255,.14)', type: 'dashed' },
+        data: [{ yAxis: q.hot }, { yAxis: q.cold }],
+      },
+    },
+    series: [mk('resonance'), mk('lurking'), mk('funds_first'), mk('dual_cold'), mk('neutral')],
+  }, true);
+  chart.off('click');
+  chart.on('click', p => { if (p.data && p.data[2]) gotoBoard(p.data[2].code); });
+}
+
+function renderPolicyRankTable() {
+  const rows = state.policy.top || [];
+  const stateCn = state.policy.state_cn || {};
+  const tbody = $('#policy-rank-table tbody');
+  tbody.innerHTML = rows.map((r, i) => {
+    const pctW = r.pct == null ? 0 : Math.round(r.pct * 100);
+    const barColor = r.pct >= 0.9 ? GOLD : r.pct <= 0.1 ? ACCENT : (r.score >= 0 ? UP : DOWN);
+    return `<tr data-code="${r.code}">
+      <td class="l" style="color:var(--text-faint)">${i + 1}</td>
+      <td class="l">${r.name}</td>
+      <td class="${cls(r.score)} score-cell">${fmtScore(r.score)}</td>
+      <td><span class="pct-bar"><i style="width:${pctW}%;background:${barColor}"></i></span>${fmtPct(r.pct)}</td>
+      <td class="l">${r.hits == null ? '--' : r.hits}</td>
+    </tr>`;
+  }).join('');
+  tbody.querySelectorAll('tr').forEach(tr =>
+    tr.addEventListener('click', () => gotoBoard(tr.dataset.code)));
+  $('#policy-note').textContent =
+    `口径：央视《新闻联播》文字稿（${state.policy.news_days} 天，截至 ${state.policy.news_end}）` +
+    `× ${state.policy.n_keyword_boards} 个板块的关键词词典；提及强度计数，不解读方向。`;
 }
 
 /* ---------------- Tab2 回测验证 ---------------- */
@@ -705,6 +811,37 @@ function renderBoard(b) {
       },
     }],
   }, true);
+
+  // 政策（时政）支柱：该板块的政策分时序 + 双因状态徽章（无数据时整卡隐藏）
+  const policyCard = $('#board-policy-card');
+  const ps = (b.policy_series || []).slice(-120);
+  if (b.policy || (ps && ps.length)) {
+    policyCard.style.display = '';
+    if (b.policy) {
+      const st = b.policy.state || 'neutral';
+      $('#board-policy-badges').innerHTML =
+        `<span class="badge badge-${st}" title="双因状态（观察口径）">${b.policy.state_cn || STATE_SHORT[st] || st}</span>` +
+        (b.policy.hits != null ? `<span class="badge" style="color:var(--text-dim);border-color:var(--border)">当日联播命中 ${b.policy.hits} 条</span>` : '') +
+        (b.policy.policy_pct != null ? `<span class="badge" style="color:var(--text-dim);border-color:var(--border)">政策分位 ${fmtPct(b.policy.policy_pct)}</span>` : '');
+    } else {
+      $('#board-policy-badges').innerHTML = '';
+    }
+    getChart('chart-board-policy').setOption({
+      grid: { left: 50, right: 20, top: 16, bottom: 28 },
+      tooltip: { ...TOOLTIP_STYLE, trigger: 'axis' },
+      xAxis: { type: 'category', data: ps.map(x => x.date), ...AXIS_STYLE, splitLine: { show: false } },
+      yAxis: { type: 'value', name: '政策分', nameTextStyle: { color: '#8b949e' }, ...AXIS_STYLE, scale: true },
+      series: [{
+        name: '政策分', type: 'line',
+        data: ps.map(x => x.policy_score == null ? null : +x.policy_score.toFixed(3)),
+        showSymbol: false, lineStyle: { width: 1.6, color: STATE_COLOR.resonance },
+        itemStyle: { color: STATE_COLOR.resonance },
+        areaStyle: { color: STATE_COLOR.resonance, opacity: 0.1 },
+      }],
+    }, true);
+  } else {
+    policyCard.style.display = 'none';
+  }
 
   const wrap = $('#factor-cards');
   wrap.innerHTML = '';

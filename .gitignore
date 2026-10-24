@@ -19,3 +19,6 @@ logs/
 # 虚拟环境
 .venv/
 venv/
+
+# 本地工具配置（Claude 预览启动等）
+.claude/

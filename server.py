@@ -54,6 +54,17 @@ def load_all() -> None:
         "pct": pd.read_parquet(DASH_DIR / "pct.parquet"),
         "kline": pd.read_parquet(DASH_DIR / "board_kline.parquet"),
     }
+    # 政策（时政）支柱：旧看板缓存无 policy 文件时降级为 unavailable
+    policy_path = DASH_DIR / "policy.json"
+    policy_scores_path = DASH_DIR / "policy_scores.parquet"
+    if policy_path.exists():
+        new_cache["policy"] = _read_json("policy.json")
+        new_cache["policy_scores"] = (pd.read_parquet(policy_scores_path)
+                                      if policy_scores_path.exists() else None)
+    else:
+        new_cache["policy"] = {"available": False, "state_cn": {},
+                               "signals": {}, "top": [], "scatter": []}
+        new_cache["policy_scores"] = None
     with _state_lock:
         _cache = new_cache
 
@@ -145,6 +156,26 @@ def api_board(code: str, days: int = Query(180, ge=1, le=1500)):
     leaders_info = c["latest"].get("leaders", {}).get(code,
                                                       {"liquidity": [], "momentum": []})
 
+    # 政策（时政）支柱：该板块的政策分时序 + 当前双因状态
+    policy_scores = c.get("policy_scores")
+    policy_series = []
+    policy_state = None
+    if policy_scores is not None:
+        ps = _matrix_long(policy_scores, "policy_score", days, board=code)
+        policy_series = ps
+    p_data = c.get("policy") or {}
+    if p_data.get("available"):
+        for pt in p_data.get("scatter", []):
+            if pt.get("code") == code:
+                policy_state = {
+                    "state": pt.get("state"),
+                    "state_cn": (p_data.get("state_cn") or {}).get(pt.get("state")),
+                    "policy_pct": pt.get("policy_pct"),
+                    "policy_score": pt.get("policy_score"),
+                    "hits": pt.get("hits"),
+                }
+                break
+
     # 该板块当前命中的信号
     badges = []
     for key in ["heating", "cooling", "hot", "cold"]:
@@ -165,6 +196,8 @@ def api_board(code: str, days: int = Query(180, ge=1, le=1500)):
         "kline": kline,
         "factors": snap,
         "factor_date": c["factor_snapshot"]["date"],
+        "policy": policy_state,
+        "policy_series": policy_series,
     }
 
 
@@ -179,6 +212,13 @@ def api_health_series(days: int = Query(120, ge=1, le=1000)):
     hs = c["health_series"]
     return {"window": hs["window"], "horizon": hs["horizon"],
             "series": hs["series"][-days:]}
+
+
+@app.get("/api/policy")
+def api_policy():
+    """政策（时政）支柱：热度榜、双因矩阵散点与双因信号（观察口径）。"""
+    c = require_data()
+    return c["policy"]
 
 
 # ---------------- 数据刷新 ----------------

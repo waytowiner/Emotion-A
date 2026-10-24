@@ -28,6 +28,7 @@ BACKTEST_WINDOW_FALLBACK = 180
 HEALTH_DAYS = 60          # 健康度滚动窗口（与 recent_signal_health 默认一致）
 HEALTH_SERIES_DAYS = 240  # 预计算健康度序列的长度上限
 HEALTH_HORIZON = 5
+POLICY_TOP_N = 15         # 政策榜导出条数
 
 
 def sanitize(obj):
@@ -175,6 +176,16 @@ def main() -> None:
         factors, cfg["weights"], cfg.get("smooth_window", 5),
         lookback=cfg.get("score_lookback", 120),
         z_clip=cfg.get("score_z_clip", 3.0))
+
+    # 政策（时政）支柱：与情绪主线完全平行；无缓存/无词典时优雅降级为 None
+    print("[3.5/6] 政策（时政）支柱 ...")
+    from main import _policy_payload
+    policy = _policy_payload(cfg, smoothed, pct, data)
+    if policy is not None:
+        print(f"    [policy] 联播 {policy['news_days']} 天（至 {policy['news_end']}），"
+              f"词典 {policy['n_keyword_boards']} 板块；"
+              f"共振 {len(policy['signals']['policy_resonance'])} / "
+              f"潜伏 {len(policy['signals']['policy_lurking'])} 个")
 
     board_close = data["board_kline"].pivot(
         index="date", columns="board_code", values="close").sort_index()
@@ -358,6 +369,71 @@ def main() -> None:
           for d, v in health_roll.dropna().tail(HEALTH_SERIES_DAYS).items()]
     dump_json("health_series.json", {"window": HEALTH_DAYS,
                                      "horizon": HEALTH_HORIZON, "series": hs})
+
+    # 政策（时政）支柱导出：policy.json（榜+双因矩阵散点数据）
+    # + policy_scores.parquet（date×board 政策平滑分，与 scores.parquet 平行）。
+    # 无政策数据时写一份空结构，前端据此隐藏双因区。
+    if policy is not None:
+        from emotion.policy import DUAL_STATE_CN
+        p_smoothed = policy["smoothed"]
+        p_pct = policy["pct"]
+        # 数据日期以情绪侧末日为准（政策分末段可能因缓存缺口比情绪侧短）
+        last_date_p = smoothed.index[-1]
+        # 政策分自身的最后有效行（缓存缺口时早于情绪末日，读数如实标注滞后）
+        p_valid = p_smoothed.dropna(how="all")
+        last_pscore = (p_valid.iloc[-1].dropna().sort_values(ascending=False)
+                      if not p_valid.empty else pd.Series(dtype=float))
+        last_ppct = (p_pct.loc[p_valid.index[-1]] if not p_valid.empty
+                     and not p_pct.empty else pd.Series(dtype=float))
+        last_epct = pct.iloc[-1]
+        last_intensity = policy.get("intensity")
+        # 双因矩阵散点：全部有读数的板块 (情绪分位, 政策分位)
+        scatter = []
+        for c in last_pscore.index:
+            ep = last_epct.get(c)
+            pp = last_ppct.get(c)
+            if pd.isna(ep) or pd.isna(pp):
+                continue
+            hits = (int(last_intensity[c]) if last_intensity is not None
+                    and pd.notna(last_intensity.get(c)) else None)
+            scatter.append({
+                "code": c, "name": board_names.get(c, c),
+                "emotion_pct": float(ep), "policy_pct": float(pp),
+                "policy_score": float(last_pscore[c]),
+                "hits": hits,
+                "etf": etf_map.get(c),
+                "state": (policy["states"].get(c) if policy["states"] is not None
+                          else "neutral"),
+            })
+        sig = policy["signals"]
+        policy_payload = {
+            "available": True,
+            "date": last_date_p,
+            "news_days": policy["news_days"],
+            "news_end": policy["news_end"],
+            "n_keyword_boards": policy["n_keyword_boards"],
+            "state_cn": DUAL_STATE_CN,
+            "signals": {k: [{"code": c, "name": board_names.get(c, c),
+                             "etf": etf_map.get(c)} for c in v]
+                        for k, v in sig.items()},
+            "top": [{
+                "code": c, "name": board_names.get(c, c),
+                "score": float(last_pscore[c]),
+                "pct": float(last_ppct[c]) if pd.notna(last_ppct.get(c)) else None,
+                "hits": (int(last_intensity[c]) if last_intensity is not None
+                         and pd.notna(last_intensity.get(c)) else None),
+                "etf": etf_map.get(c),
+            } for c in last_pscore.head(POLICY_TOP_N).index],
+            "scatter": scatter,
+        }
+        p_out = p_smoothed.copy()
+        p_out.index.name = "date"
+        p_out.reset_index().to_parquet(OUT_DIR / "policy_scores.parquet", index=False)
+        print(f"    -> policy_scores.parquet {p_out.shape}")
+    else:
+        policy_payload = {"available": False,
+                         "state_cn": {}, "signals": {}, "top": [], "scatter": []}
+    dump_json("policy.json", policy_payload)
 
     dump_json("meta.json", {
         "calendar_audit": data["calendar_audit"],
