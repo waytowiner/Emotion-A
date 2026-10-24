@@ -123,6 +123,53 @@ python server.py
 
 ---
 
+## 观察期的数据更新流程
+
+项目自 2026-10-13 起为**观察工具**：Windows 计划任务 `EmotionA_Nightly` 已禁用，
+不再每日自动采集，需手动同步。手动同步按以下顺序执行（各步约耗时见括号）：
+
+```bash
+# 1. 板块日线增量（中证 ETF 口径 255 个，约 14 分钟）
+python scripts/fetch_etf_boards.py
+
+# 2. 个股日线增量（约 25 分钟；缺口>1 日走 baostock 逐股路径）
+python scripts/fetch_stock_history.py --update
+
+# 3. 生成情绪日报（约 50 秒）
+python main.py
+
+# 4. 异动榜计算（约 20 秒）
+python scripts/daily_anomaly.py
+
+# 5. 导出看板数据（约 70 秒）
+python scripts/dump_dashboard_data.py
+
+# 6. 一致性验证（约 2 分钟，核对 58 个调仓日读数与回测一致）
+python scripts/validate_consistency.py
+
+# 7. 研究重启门槛检查（只读，判定写入 report/restart_gate.json）
+python scripts/check_restart_gate.py
+```
+
+**注意事项**
+
+- 第 1 步受中证接口限流影响，脚本内置"连续 8 次失败即中止"保护；中断后直接重跑即可断点续跑，已缓存板块不重复发请求。
+- 第 2 步 baostock 服务端会随机断线（日志出现 `baostock relogin failed`）；断线是暂时的，**直接重跑第 2 步，不要改代码**。
+- 第 1、2 步必须**收盘后**（15:05 起）运行，否则取到的是上一交易日口径。
+- 第 6 步必须通过：配置 SHA256 应为 `a748d53a...`，58 个调仓日的读数与回测须逐项一致（容差 1e-12）。
+- 第 7 步是观察期的关键闸门：只有当滚动 IC 回到零轴上方**且**连续两个月胜率站上 50%，
+  才可讨论重启研究路线。门槛已预注册在 `report/prospective_log.md` 表头。
+- 全部步骤为**只读计算或增量缓存写入**，不修改 `config.yaml`，不调任何参数。
+
+**可选诊断项**（不进日报主线，仅供研究）：
+
+```bash
+python scripts/fetch_fund_flow.py   # 资金流缓存，2887 只约 70 分钟；东财接口限流后需分批重跑
+python scripts/diag_fund_flow.py    # 主力净流入因子诊断
+```
+
+---
+
 ## 开源协议与商用授权声明 (License & Commercial Terms)
 
 本项目采用 **[非商业开源许可协议 (Non-Commercial Open License)](LICENSE)** 发布：
