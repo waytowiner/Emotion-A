@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
 
 # 数据与缓存（体积大，可重新抓取/生成）
 data/
